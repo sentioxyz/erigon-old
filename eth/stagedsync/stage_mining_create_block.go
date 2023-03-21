@@ -31,6 +31,9 @@ type MiningBlock struct {
 	Receipts    types.Receipts
 	Withdrawals []*types.Withdrawal
 	PreparedTxs types.TransactionsStream
+
+	MustRepesctPreparedTxs bool // Optimism addition: option to enforce that the txs in the preparedTxs stream are included
+	NoTxPool               bool // Optimism addition: option to disable tx pool contents from being included
 }
 
 type MiningState struct {
@@ -170,9 +173,19 @@ func SpawnMiningCreateBlockStage(s *StageState, tx kv.RwTx, cfg MiningCreateBloc
 		timestamp = cfg.blockBuilderParameters.Timestamp
 	}
 
-	header := core.MakeEmptyHeader(parent, &cfg.chainConfig, timestamp, &cfg.miner.MiningConfig.GasLimit)
+	gasLimit := &cfg.miner.MiningConfig.GasLimit
+	if cfg.blockBuilderParameters != nil && cfg.blockBuilderParameters.GasLimit != nil {
+		gasLimit = cfg.blockBuilderParameters.GasLimit
+	} else if cfg.chainConfig.Optimism != nil && cfg.miner.MiningConfig.GasLimit != 0 {
+		// configure the gas limit of pending blocks with the miner gas limit config when using optimism
+		v := cfg.miner.MiningConfig.GasLimit
+		gasLimit = &v
+	}
+	header := core.MakeEmptyHeader(parent, &cfg.chainConfig, timestamp, gasLimit)
 	header.Coinbase = coinbase
-	header.Extra = cfg.miner.MiningConfig.ExtraData
+	if cfg.chainConfig.Optimism == nil {
+		header.Extra = cfg.miner.MiningConfig.ExtraData
+	}
 
 	log.Info(fmt.Sprintf("[%s] Start mine", logPrefix), "block", executionAt+1, "baseFee", header.BaseFee, "gasLimit", header.GasLimit)
 
@@ -197,6 +210,13 @@ func SpawnMiningCreateBlockStage(s *StageState, tx kv.RwTx, cfg MiningCreateBloc
 		current.Header = header
 		current.Uncles = nil
 		current.Withdrawals = cfg.blockBuilderParameters.Withdrawals
+		current.NoTxPool = cfg.blockBuilderParameters.NoTxPool
+		current.PreparedTxs = &types.TransactionsFixedOrder{
+			Transactions: cfg.blockBuilderParameters.Transactions,
+		}
+		if len(cfg.blockBuilderParameters.Transactions) > 0 {
+			current.MustRepesctPreparedTxs = true
+		}
 		return nil
 	}
 

@@ -52,6 +52,8 @@ const (
 	DynamicFeeTxType
 )
 
+const DepositTxType = 0x7e
+
 // Transaction is an Ethereum transaction.
 type Transaction interface {
 	Type() byte
@@ -152,6 +154,12 @@ func DecodeTransaction(s *rlp.Stream) (Transaction, error) {
 		tx = t
 	case DynamicFeeTxType:
 		t := &DynamicFeeTransaction{}
+		if err = t.DecodeRLP(s); err != nil {
+			return nil, err
+		}
+		tx = t
+	case DepositTxType:
+		t := &DepositTx{}
 		if err = t.DecodeRLP(s); err != nil {
 			return nil, err
 		}
@@ -465,6 +473,11 @@ type Message struct {
 	accessList types2.AccessList
 	checkNonce bool
 	isFree     bool
+
+	isSystemTx    bool
+	isDepositTx   bool
+	mint          *uint256.Int
+	rollupDataGas *RollupGasData
 }
 
 func NewMessage(from libcommon.Address, to *libcommon.Address, nonce uint64, amount *uint256.Int, gasLimit uint64, gasPrice *uint256.Int, feeCap, tip *uint256.Int, data []byte, accessList types2.AccessList, checkNonce bool, isFree bool) Message {
@@ -525,3 +538,7 @@ func (m *Message) ChangeGas(globalGasCap, desiredGas uint64) {
 
 	m.gasLimit = gas
 }
+
+func (m Message) IsSystemTx() bool   { return m.isSystemTx }
+func (m Message) IsDepositTx() bool  { return m.isDepositTx }
+func (m Message) Mint() *uint256.Int { return m.mint }

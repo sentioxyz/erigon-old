@@ -629,6 +629,21 @@ func (s *EthBackendServer) EngineForkChoiceUpdated(ctx context.Context, req *rem
 	if payloadAttributes == nil || status.Status != remote.EngineStatus_VALID {
 		return &remote.EngineForkChoiceUpdatedResponse{PayloadStatus: convertPayloadStatus(status)}, nil
 	}
+	var transactions []types.Transaction
+	if s.config.Optimism != nil {
+		if payloadAttributes.GasLimit == nil {
+			return nil, fmt.Errorf("gas limit is required for rollup execution")
+		}
+		transactions = make(types.Transactions, 0, len(payloadAttributes.Transactions))
+		for i, otx := range payloadAttributes.Transactions {
+			var tx types.Transaction
+			if tx, err = types.UnmarshalTransactionFromBinary(otx); err != nil {
+				return nil, fmt.Errorf("transaction %d is not valid: %v", i, err)
+			}
+			transactions = append(transactions, tx)
+		}
+		log.Debug("Rollup tx", "numTx", len(transactions))
+	}
 
 	if !s.proposing {
 		return nil, fmt.Errorf("execution layer not running as a proposer. enable proposer by taking out the --proposer.disable flag on startup")
@@ -661,12 +676,19 @@ func (s *EthBackendServer) EngineForkChoiceUpdated(ctx context.Context, req *rem
 		return nil, &InvalidPayloadAttributesErr
 	}
 
+	var noTxPool bool
+	if payloadAttributes.NoTxPool != nil {
+		noTxPool = *payloadAttributes.NoTxPool
+	}
 	param := core.BlockBuilderParameters{
 		ParentHash:            forkChoice.HeadBlockHash,
 		Timestamp:             payloadAttributes.Timestamp,
 		PrevRandao:            gointerfaces.ConvertH256ToHash(payloadAttributes.PrevRandao),
 		SuggestedFeeRecipient: gointerfaces.ConvertH160toAddress(payloadAttributes.SuggestedFeeRecipient),
 		PayloadId:             s.payloadId,
+		NoTxPool:              noTxPool,
+		Transactions:          transactions,
+		GasLimit:              payloadAttributes.GasLimit,
 	}
 	if payloadAttributes.Version >= 2 {
 		param.Withdrawals = ConvertWithdrawalsFromRpc(payloadAttributes.Withdrawals)

@@ -52,7 +52,7 @@ func MakeSigner(config *chain.Config, blockNumber uint64) *Signer {
 		signer.dynamicfee = true
 		signer.chainID.Set(&chainId)
 		signer.chainIDMul.Mul(&chainId, u256.Num2)
-	case config.IsBerlin(blockNumber):
+	case config.IsBerlin(blockNumber) && (config.Optimism == nil || blockNumber >= config.BedrockBlock.Uint64()):
 		signer.protected = true
 		signer.accesslist = true
 		signer.chainID.Set(&chainId)
@@ -192,6 +192,8 @@ func (sg Signer) SenderWithContext(context *secp256k1.Context, tx Transaction) (
 	signChainID := sg.chainID.ToBig() // This is reset to nil if tx is unprotected
 	// recoverPlain below will subract 27 from V
 	switch t := tx.(type) {
+	case *DepositTx:
+		return tx.(*DepositTx).From, nil
 	case *LegacyTx:
 		if !t.Protected() {
 			if !sg.unprotected {
@@ -250,6 +252,8 @@ func (sg Signer) SenderWithContext(context *secp256k1.Context, tx Transaction) (
 // given signature.
 func (sg Signer) SignatureValues(tx Transaction, sig []byte) (R, S, V *uint256.Int, err error) {
 	switch t := tx.(type) {
+	case *DepositTx:
+		return nil, nil, nil, fmt.Errorf("deposits do not have a signature")
 	case *LegacyTx:
 		R, S, V = decodeSignature(sig)
 		if sg.chainID.IsZero() {

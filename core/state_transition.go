@@ -94,6 +94,9 @@ type Message interface {
 	AccessList() types2.AccessList
 
 	IsFree() bool
+
+	IsDepositTx() bool
+	IsSystemTx() bool
 }
 
 // ExecutionResult includes all output after executing given evm
@@ -249,6 +252,21 @@ func CheckEip1559TxGasFeeCap(from libcommon.Address, gasFeeCap, tip, baseFee *ui
 
 // DESCRIBED: docs/programmers_guide/guide.md#nonce
 func (st *StateTransition) preCheck(gasBailout bool) error {
+	if st.msg.IsDepositTx() {
+		// No fee fields to check, no nonce to check, and no need to check if EOA (L1 already verified it for us)
+		// Gas is free, but no refunds!
+		st.initialGas = st.msg.Gas()
+		st.gas += st.msg.Gas() // Add gas here in order to be able to execute calls.
+		// Don't touch the gas pool for system transactions
+		if st.msg.IsSystemTx() {
+			if st.evm.ChainRules().IsOptimismRegolith {
+				return fmt.Errorf("%w: address %v", ErrSystemTxNotSupported,
+					st.msg.From().Hex())
+			}
+			return nil
+		}
+		return st.gp.SubGas(st.msg.Gas()) // gas used by deposits may not be used by other txs
+	}
 	// Make sure this transaction's nonce is correct.
 	if st.msg.CheckNonce() {
 		stNonce := st.state.GetNonce(st.msg.From())

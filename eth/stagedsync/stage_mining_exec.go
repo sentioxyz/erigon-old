@@ -123,8 +123,7 @@ func SpawnMiningExecStage(s *StageState, tx kv.RwTx, cfg MiningExecCfg, quit <-c
 				return err
 			}
 			NotifyPendingLogs(logPrefix, cfg.notifier, logs)
-		} else {
-
+		} else if !current.NoTxPool {
 			yielded := mapset.NewSet[[32]byte]()
 			simulationTx := memdb.NewMemoryBatch(tx, cfg.tmpdir)
 			defer simulationTx.Rollback()
@@ -424,7 +423,7 @@ LOOP:
 			stopped = time.NewTicker(500 * time.Millisecond)
 		}
 		// If we don't have enough gas for any further transactions then we're done
-		if gasPool.Gas() < params.TxGas {
+		if gasPool.Gas() < params.TxGas && !current.MustRepesctPreparedTxs {
 			log.Debug(fmt.Sprintf("[%s] Not enough gas for further transactions", logPrefix), "have", gasPool, "want", params.TxGas)
 			done = true
 			break
@@ -454,6 +453,10 @@ LOOP:
 
 		// Start executing the transaction
 		logs, err := miningCommitTx(txn, coinbase, vmConfig, chainConfig, ibs, current)
+		if current.MustRepesctPreparedTxs && err != nil {
+			log.Debug(fmt.Sprintf("[%s] Transaction failed, cannot proceed", logPrefix), "hash", txn.Hash(), "err", err)
+			return nil, false, err
+		}
 
 		if errors.Is(err, core.ErrGasLimitReached) {
 			// Pop the env out-of-gas transaction without shifting in the next from the account

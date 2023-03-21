@@ -111,6 +111,7 @@ COMMANDS += downloader
 COMMANDS += erigon-cl
 COMMANDS += hack
 COMMANDS += integration
+COMMANDS += gethimport
 COMMANDS += observer
 COMMANDS += pics
 COMMANDS += rpcdaemon

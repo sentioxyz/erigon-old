@@ -24,6 +24,7 @@ import (
 	"github.com/ledgerwatch/erigon-lib/chain"
 	libcommon "github.com/ledgerwatch/erigon-lib/common"
 	"github.com/ledgerwatch/erigon-lib/common/length"
+	"github.com/ledgerwatch/log/v3"
 
 	"github.com/ledgerwatch/erigon/core/systemcontracts"
 
@@ -463,7 +464,7 @@ func MakeEmptyHeader(parent *types.Header, chainConfig *chain.Config, timestamp 
 	if chainConfig.IsLondon(header.Number.Uint64()) {
 		header.BaseFee = misc.CalcBaseFee(chainConfig, parent)
 		if !chainConfig.IsLondon(parent.Number.Uint64()) {
-			parentGasLimit = parent.GasLimit * params.ElasticityMultiplier
+			parentGasLimit = parent.GasLimit * misc.GetElasicityMultiplier(chainConfig)
 		}
 	}
 	if targetGasLimit != nil {
@@ -472,6 +473,8 @@ func MakeEmptyHeader(parent *types.Header, chainConfig *chain.Config, timestamp 
 		header.GasLimit = parentGasLimit
 	}
 
+	log.Debug("Generated empty header", "number", header.Number, "hash", header.Hash(),
+		"parent", parent.Hash(), "gasLimit", header.GasLimit, "baseFee", header.BaseFee)
 	return header
 }
 

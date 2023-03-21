@@ -763,6 +763,35 @@ func DefaultChiadoGenesisBlock() *Genesis {
 	}
 }
 
+func DefaultOptBeta1GenesisBlock() *Genesis {
+	return &Genesis{
+		Config:     params.OptBeta1ChainConfig,
+		Nonce:      0,
+		Timestamp:  0x6386e89c,
+		GasLimit:   0x1c9c380,
+		Difficulty: big.NewInt(0x0),
+		Mixhash:    libcommon.HexToHash("0x0000000000000000000000000000000000000000000000000000000000000000"),
+		Coinbase:   libcommon.HexToAddress("0x0000000000000000000000000000000000000000"),
+		Alloc:      readPrealloc("allocs/opt_beta1.json"),
+		ExtraData:  hexutil.MustDecode("0x0000000000000000000000000000000000000000000000000000000000000000"),
+		BaseFee:    big.NewInt(0x3b9aca00),
+	}
+}
+
+func DefaultOptGoerliGenesisBlock() *Genesis {
+	return &Genesis{
+		Config:     params.OptGoerliChainConfig,
+		Nonce:      0,
+		Timestamp:  0x0,
+		GasLimit:   0xe4e1c0,
+		Difficulty: big.NewInt(0x1),
+		Mixhash:    libcommon.HexToHash("0x0000000000000000000000000000000000000000000000000000000000000000"),
+		Coinbase:   libcommon.HexToAddress("0x0000000000000000000000000000000000000000"),
+		Alloc:      readPrealloc("allocs/opt_goerli.json"),
+		ExtraData:  hexutil.MustDecode("0x000000000000000000000000000000000000000000000000000000000000000027770a9694e4b4b1e130ab91bc327c36855f612e0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"),
+	}
+}
+
 // Pre-calculated version of:
 //
 //	DevnetSignPrivateKey = crypto.HexToECDSA(sha256.Sum256([]byte("erigon devnet key")))
@@ -829,6 +858,10 @@ func DefaultGenesisBlockByChainName(chain string) *Genesis {
 		return DefaultGnosisGenesisBlock()
 	case networkname.ChiadoChainName:
 		return DefaultChiadoGenesisBlock()
+	case networkname.OptBeta1ChainName:
+		return DefaultOptBeta1GenesisBlock()
+	case networkname.OptGoerliChainName:
+		return DefaultOptGoerliGenesisBlock()
 	default:
 		return nil
 	}

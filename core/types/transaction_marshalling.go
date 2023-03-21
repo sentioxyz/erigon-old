@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 
 	"github.com/holiman/uint256"
 	libcommon "github.com/ledgerwatch/erigon-lib/common"
@@ -11,6 +12,7 @@ import (
 	"github.com/valyala/fastjson"
 
 	"github.com/ledgerwatch/erigon/common/hexutil"
+	"github.com/ledgerwatch/erigon/rlp"
 )
 
 // txJSON is the JSON representation of transactions.
@@ -29,6 +31,12 @@ type txJSON struct {
 	R        *hexutil.Big       `json:"r"`
 	S        *hexutil.Big       `json:"s"`
 	To       *libcommon.Address `json:"to"`
+
+	// Deposit transaction fields
+	SourceHash *libcommon.Hash    `json:"sourceHash,omitempty"`
+	From       *libcommon.Address `json:"from,omitempty"`
+	Mint       *hexutil.Big       `json:"mint,omitempty"`
+	IsSystemTx *bool              `json:"isSystemTx,omitempty"`
 
 	// Access list transaction fields:
 	ChainID    *hexutil.Big       `json:"chainId,omitempty"`
@@ -94,6 +102,25 @@ func (tx DynamicFeeTransaction) MarshalJSON() ([]byte, error) {
 	return json.Marshal(&enc)
 }
 
+func (tx DepositTx) MarshalJSON() ([]byte, error) {
+	var enc txJSON
+	enc.SourceHash = &tx.SourceHash
+	enc.Hash = tx.Hash()
+	enc.Type = hexutil.Uint64(tx.Type())
+	nonce := hexutil.Uint64(tx.GetNonce())
+	enc.Nonce = &nonce
+	enc.Gas = (*hexutil.Uint64)(&tx.Gas)
+	enc.Value = (*hexutil.Big)(tx.Value.ToBig())
+	enc.SourceHash = &tx.SourceHash
+	enc.To = tx.To
+	enc.From = &tx.From
+	if tx.Mint != nil {
+		enc.Mint = (*hexutil.Big)(tx.Mint.ToBig())
+	}
+	enc.IsSystemTx = &tx.IsSystemTx
+	return json.Marshal(&enc)
+}
+
 func UnmarshalTransactionFromJSON(input []byte) (Transaction, error) {
 	var p fastjson.Parser
 	v, err := p.ParseBytes(input)
@@ -109,6 +136,12 @@ func UnmarshalTransactionFromJSON(input []byte) (Transaction, error) {
 		}
 	}
 	switch byte(txType) {
+	case DepositTxType:
+		tx, err := UnmarshalDepositTxFromJSON(input)
+		if err != nil {
+			return nil, err
+		}
+		return tx, nil
 	case LegacyTxType:
 		tx := &LegacyTx{}
 		if err = tx.UnmarshalJSON(input); err != nil {
@@ -358,3 +391,74 @@ func (tx *DynamicFeeTransaction) UnmarshalJSON(input []byte) error {
 	}
 	return nil
 }
+
+func UnmarshalDepositTxFromJSON(input []byte) (Transaction, error) {
+	var dec txJSON
+	if err := json.Unmarshal(input, &dec); err != nil {
+		return nil, err
+	}
+	if dec.AccessList != nil || dec.FeeCap != nil || dec.Tip != nil {
+		return nil, errors.New("unexpected field(s) in deposit transaction")
+	}
+	if dec.GasPrice != nil && dec.GasPrice.ToInt().Cmp(libcommon.Big0) != 0 {
+		return nil, errors.New("deposit transaction GasPrice must be 0")
+	}
+	if (dec.V != nil && dec.V.ToInt().Cmp(libcommon.Big0) != 0) ||
+		(dec.R != nil && dec.R.ToInt().Cmp(libcommon.Big0) != 0) ||
+		(dec.S != nil && dec.S.ToInt().Cmp(libcommon.Big0) != 0) {
+		return nil, errors.New("deposit transaction signature must be 0 or unset")
+	}
+	var inner Transaction
+	var itx DepositTx
+	inner = &itx
+	if dec.To != nil {
+		itx.To = dec.To
+	}
+	if dec.Gas == nil {
+		return nil, errors.New("missing required field 'gas' for txdata")
+	}
+	itx.Gas = uint64(*dec.Gas)
+	if dec.Value == nil {
+		return nil, errors.New("missing required field 'value' in transaction")
+	}
+	var overflow bool
+	itx.Value, overflow = uint256.FromBig(dec.Value.ToInt())
+	if overflow {
+		return nil, errors.New("'value' in transaction does not fit in 256 bits")
+	}
+	// mint may be omitted or nil if there is nothing to mint.
+	itx.Mint, overflow = uint256.FromBig(dec.Mint.ToInt())
+	if dec.Data == nil {
+		return nil, errors.New("missing required field 'input' in transaction")
+	}
+	itx.Data = *dec.Data
+	if dec.From == nil {
+		return nil, errors.New("missing required field 'from' in transaction")
+	}
+	itx.From = *dec.From
+	if dec.SourceHash == nil {
+		return nil, errors.New("missing required field 'sourceHash' in transaction")
+	}
+	itx.SourceHash = *dec.SourceHash
+	// IsSystemTx may be omitted. Defaults to false.
+	if dec.IsSystemTx != nil {
+		itx.IsSystemTx = *dec.IsSystemTx
+	}
+
+	if dec.Nonce != nil {
+		inner = &depositTxWithNonce{DepositTx: itx, EffectiveNonce: uint64(*dec.Nonce)}
+	}
+	return inner, nil
+}
+
+type depositTxWithNonce struct {
+	DepositTx
+	EffectiveNonce uint64
+}
+
+// EncodeRLP ensures that RLP encoding this transaction excludes the nonce. Otherwise, the tx Hash would change
+func (tx *depositTxWithNonce) EncodeRLP(w io.Writer) error {
+	return rlp.Encode(w, tx.DepositTx)
+}
+
+func (tx *depositTxWithNonce) GetNonce() uint64 { return tx.EffectiveNonce }

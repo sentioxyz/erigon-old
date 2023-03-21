@@ -155,7 +155,7 @@ func (r *Receipt) decodePayload(s *rlp.Stream) error {
 	if b, err = s.Bytes(); err != nil {
 		return fmt.Errorf("read PostStateOrStatus: %w", err)
 	}
-	r.setStatus(b)
+	r.SetStatus(b)
 	if r.CumulativeGasUsed, err = s.Uint(); err != nil {
 		return fmt.Errorf("read CumulativeGasUsed: %w", err)
 	}
@@ -262,7 +262,7 @@ func (r *Receipt) DecodeRLP(s *rlp.Stream) error {
 	return nil
 }
 
-func (r *Receipt) setStatus(postStateOrStatus []byte) error {
+func (r *Receipt) SetStatus(postStateOrStatus []byte) error {
 	switch {
 	case bytes.Equal(postStateOrStatus, receiptStatusSuccessfulRLP):
 		r.Status = ReceiptStatusSuccessful
@@ -350,10 +350,10 @@ func (r *ReceiptForStorage) DecodeRLP(s *rlp.Stream) error {
 	// Try decoding from the newest format for future proofness, then the older one
 	// for old nodes that just upgraded. V4 was an intermediate unreleased format so
 	// we do need to decode it, but it's not common (try last).
-	if err := decodeStoredReceiptRLP(r, blob); err == nil {
+	if err = decodeStoredReceiptRLP(r, blob); err == nil {
 		return nil
 	}
-	if err := decodeV3StoredReceiptRLP(r, blob); err == nil {
+	if err = decodeV3StoredReceiptRLP(r, blob); err == nil {
 		return nil
 	}
 	return decodeV4StoredReceiptRLP(r, blob)
@@ -364,7 +364,7 @@ func decodeStoredReceiptRLP(r *ReceiptForStorage, blob []byte) error {
 	if err := rlp.DecodeBytes(blob, &stored); err != nil {
 		return err
 	}
-	if err := (*Receipt)(r).setStatus(stored.PostStateOrStatus); err != nil {
+	if err := (*Receipt)(r).SetStatus(stored.PostStateOrStatus); err != nil {
 		return err
 	}
 	r.CumulativeGasUsed = stored.CumulativeGasUsed
@@ -382,7 +382,7 @@ func decodeV4StoredReceiptRLP(r *ReceiptForStorage, blob []byte) error {
 	if err := rlp.DecodeBytes(blob, &stored); err != nil {
 		return err
 	}
-	if err := (*Receipt)(r).setStatus(stored.PostStateOrStatus); err != nil {
+	if err := (*Receipt)(r).SetStatus(stored.PostStateOrStatus); err != nil {
 		return err
 	}
 	r.CumulativeGasUsed = stored.CumulativeGasUsed
@@ -403,7 +403,7 @@ func decodeV3StoredReceiptRLP(r *ReceiptForStorage, blob []byte) error {
 	if err := rlp.DecodeBytes(blob, &stored); err != nil {
 		return err
 	}
-	if err := (*Receipt)(r).setStatus(stored.PostStateOrStatus); err != nil {
+	if err := (*Receipt)(r).SetStatus(stored.PostStateOrStatus); err != nil {
 		return err
 	}
 	r.CumulativeGasUsed = stored.CumulativeGasUsed

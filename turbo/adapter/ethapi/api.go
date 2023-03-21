@@ -386,6 +386,10 @@ type RPCTransaction struct {
 	V                *hexutil.Big       `json:"v"`
 	R                *hexutil.Big       `json:"r"`
 	S                *hexutil.Big       `json:"s"`
+
+	SourceHash *libcommon.Hash `json:"sourceHash,omitempty"`
+	Mint       *hexutil.Big    `json:"mint,omitempty"`
+	IsSystemTx *bool           `json:"isSystemTx,omitempty"`
 }
 
 // newRPCTransaction returns a transaction that will serialize to the RPC
@@ -406,6 +410,13 @@ func newRPCTransaction(tx types.Transaction, blockHash libcommon.Hash, blockNumb
 		Value: (*hexutil.Big)(tx.GetValue().ToBig()),
 	}
 	switch t := tx.(type) {
+	case *types.DepositTx:
+		result.SourceHash = &t.SourceHash
+		result.From = t.From
+		if t.Mint != nil {
+			result.Mint = (*hexutil.Big)(t.Mint.ToBig())
+		}
+		result.IsSystemTx = &t.IsSystemTx
 	case *types.LegacyTx:
 		chainId = types.DeriveChainId(&t.V)
 		// if a legacy transaction has an EIP-155 chain id, include it explicitly, otherwise chain id is not included
@@ -442,11 +453,13 @@ func newRPCTransaction(tx types.Transaction, blockHash libcommon.Hash, blockNumb
 			result.GasPrice = nil
 		}
 	}
-	signer := types.LatestSignerForChainID(chainId.ToBig())
-	var err error
-	result.From, err = tx.Sender(*signer)
-	if err != nil {
-		log.Warn("sender recovery", "err", err)
+	if chainId.Gt(uint256.NewInt(0)) {
+		signer := types.LatestSignerForChainID(chainId.ToBig())
+		var err error
+		result.From, err = tx.Sender(*signer)
+		if err != nil {
+			log.Warn("sender recovery", "err", err)
+		}
 	}
 	if blockHash != (libcommon.Hash{}) {
 		result.BlockHash = &blockHash

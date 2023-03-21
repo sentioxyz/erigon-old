@@ -95,4 +95,6 @@ var (
 	// ErrSenderNoEOA is returned if the sender of a transaction is a contract.
 	// See EIP-3607: Reject transactions from senders with deployed code.
 	ErrSenderNoEOA = errors.New("sender not an eoa")
+
+	ErrSystemTxNotSupported = errors.New("system tx not supported")
 )
