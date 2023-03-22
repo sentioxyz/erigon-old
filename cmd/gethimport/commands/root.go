@@ -125,7 +125,6 @@ func runBatch(config *chain2.Config, db kv.RwDB, gethDB *geth.DB, start, end uin
 		if hash == (libcommon.Hash{}) {
 			return fmt.Errorf("cannot find hash for block %d in geth db", number)
 		}
-
 		block, err := gethDB.ReadBlock(hash, number)
 		if err != nil {
 			return err
@@ -133,10 +132,18 @@ func runBatch(config *chain2.Config, db kv.RwDB, gethDB *geth.DB, start, end uin
 		if block == nil {
 			return errors.New("cannot find block in geth db")
 		}
+		td := gethDB.ReadTd(hash, number)
+		if td == nil {
+			return errors.New("cannot find td in geth db")
+		}
+
 		if err := rawdb.WriteCanonicalHash(tx, hash, number); err != nil {
 			return err
 		}
 		if err := rawdb.WriteBlock(tx, block); err != nil {
+			return err
+		}
+		if err := rawdb.WriteTd(tx, hash, number, td); err != nil {
 			return err
 		}
 		receipts, err := gethDB.ReadRawReceipts(hash, number)
@@ -453,12 +460,6 @@ func run(cmd *cobra.Command, args []string) {
 
 	// Run InterHashState stage.
 	if err = db.Update(ctx, func(tx kv.RwTx) error {
-		if err = tx.ClearBucket(kv.TrieOfAccounts); err != nil {
-			return err
-		}
-		if err = tx.ClearBucket(kv.TrieOfStorage); err != nil {
-			return err
-		}
 		cfg := stagedsync.StageTrieCfg(db, true, true, false, dirs.Tmp, nil, nil, historyV3, nil)
 		var root libcommon.Hash
 		if root, err = stagedsync.RegenerateIntermediateHashes("InterHashState", tx, cfg, headHeader.Root, ctx); err != nil {

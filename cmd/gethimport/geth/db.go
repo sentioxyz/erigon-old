@@ -59,6 +59,7 @@ func NewDB(chaindata string) *DB {
 		{chainFreezerHashTable, true},
 		{chainFreezerBodiesTable, false},
 		{chainFreezerReceiptTable, false},
+		{chainFreezerDifficultyTable, true},
 	}
 
 	for _, p := range tablesToOpen {
@@ -81,7 +82,7 @@ func (db *DB) Get(key []byte) ([]byte, error) {
 func (db *DB) Ancient(name string, number uint64) ([]byte, error) {
 	table, ok := db.ancientTables[name]
 	if !ok {
-		return nil, fmt.Errorf("unknown ancient table %s", name)
+		panic("unknown ancient table " + name)
 	}
 	return table.Retrieve(number)
 }

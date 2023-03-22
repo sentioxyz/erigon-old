@@ -19,6 +19,7 @@ import (
 var (
 	headBlockKey          = []byte("LastBlock")
 	headerPrefix          = []byte("h")           // headerPrefix + num (uint64 big endian) + hash -> header
+	headerTDSuffix        = []byte("t")           // headerPrefix + num (uint64 big endian) + hash + headerTDSuffix -> td
 	headerHashSuffix      = []byte("n")           // headerPrefix + num (uint64 big endian) + headerHashSuffix -> hash
 	headerNumberPrefix    = []byte("H")           // headerNumberPrefix + hash -> num (uint64 big endian)
 	blockBodyPrefix       = []byte("b")           // blockBodyPrefix + num (uint64 big endian) + hash -> block body
@@ -74,6 +75,11 @@ func accountTrieNodeKey(path []byte) []byte {
 // codeKey = CodePrefix + hash
 func codeKey(hash common.Hash) []byte {
 	return append(CodePrefix, hash.Bytes()...)
+}
+
+// headerTDKey = headerPrefix + num (uint64 big endian) + hash + headerTDSuffix
+func headerTDKey(number uint64, hash common.Hash) []byte {
+	return append(headerKey(number, hash), headerTDSuffix...)
 }
 
 func (db *DB) ReadCanonicalHash(number uint64) common.Hash {
@@ -275,6 +281,40 @@ func (db *DB) ReadCode(hash common.Hash) []byte {
 func (db *DB) ReadCodeWithPrefix(hash common.Hash) []byte {
 	data, _ := db.Get(codeKey(hash))
 	return data
+}
+
+// ReadTdRLP retrieves a block's total difficulty corresponding to the hash in RLP encoding.
+func (db *DB) ReadTdRLP(hash common.Hash, number uint64) rlp.RawValue {
+	// First try to look up the data in ancient database. Extra hash
+	// comparison is necessary since ancient database only maintains
+	// the canonical data.
+	data, _ := db.Ancient(chainFreezerDifficultyTable, number)
+	if len(data) > 0 {
+		h, _ := db.Ancient(chainFreezerHashTable, number)
+		if common.BytesToHash(h) == hash {
+			return data
+		}
+	}
+	// Then try to look up the data in leveldb.
+	data, _ = db.Get(headerTDKey(number, hash))
+	if len(data) > 0 {
+		return data
+	}
+	return nil // Can't find the data anywhere.
+}
+
+// ReadTd retrieves a block's total difficulty corresponding to the hash.
+func (db *DB) ReadTd(hash common.Hash, number uint64) *big.Int {
+	data := db.ReadTdRLP(hash, number)
+	if len(data) == 0 {
+		return nil
+	}
+	td := new(big.Int)
+	if err := rlp.Decode(bytes.NewReader(data), td); err != nil {
+		log.Error("Invalid block total difficulty RLP", "hash", hash, "err", err)
+		return nil
+	}
+	return td
 }
 
 type StateAccount struct {

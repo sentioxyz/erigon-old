@@ -52,7 +52,7 @@ func MakeSigner(config *chain.Config, blockNumber uint64) *Signer {
 		signer.dynamicfee = true
 		signer.chainID.Set(&chainId)
 		signer.chainIDMul.Mul(&chainId, u256.Num2)
-	case config.IsBerlin(blockNumber) && (config.Optimism == nil || blockNumber >= config.BedrockBlock.Uint64()):
+	case config.IsBerlin(blockNumber):
 		signer.protected = true
 		signer.accesslist = true
 		signer.chainID.Set(&chainId)
