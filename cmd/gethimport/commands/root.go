@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 
 	"github.com/c2h5oh/datasize"
+	"github.com/holiman/uint256"
 	chain2 "github.com/ledgerwatch/erigon-lib/chain"
 	libcommon "github.com/ledgerwatch/erigon-lib/common"
 	"github.com/ledgerwatch/erigon-lib/common/datadir"
@@ -277,11 +278,16 @@ func importAccountStorage(tx kv.RwTx, gethDB *geth.DB, address libcommon.Address
 			return fmt.Errorf("cannot find preimage for storage key %x", decodedStorageKey)
 		}
 		compositeKey := dbutils.PlainGenerateCompositeStorageKey(address.Bytes(), account.Incarnation, originalKey[:])
+		_, content, _, err := rlp.Split(node.Value)
+		if err != nil {
+			return err
+		}
+		value := new(uint256.Int).SetBytes(content).Bytes()
 		storageSize++
 		if storageSize%10000 == 0 {
 			log.Info("Imported storage", "address", address, "storageSize", storageSize)
 		}
-		return tx.Put(kv.PlainState, compositeKey, node.Value)
+		return tx.Put(kv.PlainState, compositeKey, value)
 	}, func(h []byte) (*geth.TrieNode, error) {
 		return gethDB.GetTrieNode(h)
 	}); err != nil {
