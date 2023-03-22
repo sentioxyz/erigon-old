@@ -385,14 +385,14 @@ func run(cmd *cobra.Command, args []string) {
 	log.Info("Recovered preimage", "numAccounts", len(accountHashToAddress), "numHashes", len(hashPreimage))
 
 	// Import states.
-	var stateLatestNumber uint64
+	var stateProgress uint64
 	if err = db.View(ctx, func(tx kv.Tx) error {
-		stateLatestNumber, err = stages.GetStageProgress(tx, stages.Execution)
+		stateProgress, err = stages.GetStageProgress(tx, stages.Execution)
 		return err
 	}); err != nil {
 		panic(err)
 	}
-	if stateLatestNumber >= headNumber {
+	if stateProgress >= headNumber {
 		log.Info("State is already imported")
 	} else {
 		if err = db.Update(ctx, func(tx kv.RwTx) error {
@@ -448,35 +448,58 @@ func run(cmd *cobra.Command, args []string) {
 		log.Info("Imported states", "numAccounts", numAccounts, "headNumber", headNumber)
 	}
 
-	// Run HashState stage.
 	dirs, historyV3 := datadir.New(datadirCli), kvcfg.HistoryV3.FromDB(db)
-	if err = db.Update(ctx, func(tx kv.RwTx) error {
-		if err = tx.ClearBucket(kv.HashedAccounts); err != nil {
-			return err
-		}
-		if err = tx.ClearBucket(kv.HashedStorage); err != nil {
-			return err
-		}
-		cfg := stagedsync.StageHashStateCfg(db, dirs, historyV3, nil)
-		return stagedsync.PromoteHashedStateCleanly("HashState", tx, cfg, ctx)
+	// Run HashState stage.
+	var hashStateProgress uint64
+	if err = db.View(ctx, func(tx kv.Tx) error {
+		hashStateProgress, err = stages.GetStageProgress(tx, stages.HashState)
+		return err
 	}); err != nil {
 		panic(err)
 	}
-	log.Info("Finished HashState")
+	if hashStateProgress < headNumber {
+		if err = db.Update(ctx, func(tx kv.RwTx) error {
+			if err = tx.ClearBucket(kv.HashedAccounts); err != nil {
+				return err
+			}
+			if err = tx.ClearBucket(kv.HashedStorage); err != nil {
+				return err
+			}
+			cfg := stagedsync.StageHashStateCfg(db, dirs, historyV3, nil)
+			if err = stagedsync.PromoteHashedStateCleanly("HashState", tx, cfg, ctx); err != nil {
+				return err
+			}
+			return stages.SaveStageProgress(tx, stages.HashState, headNumber)
+		}); err != nil {
+			panic(err)
+		}
+		log.Info("Finished HashState", "headNumber", headNumber)
+	}
 
-	// Run InterHashState stage.
-	if err = db.Update(ctx, func(tx kv.RwTx) error {
-		cfg := stagedsync.StageTrieCfg(db, true, true, false, dirs.Tmp, nil, nil, historyV3, nil)
-		var root libcommon.Hash
-		if root, err = stagedsync.RegenerateIntermediateHashes("InterHashState", tx, cfg, headHeader.Root, ctx); err != nil {
-			return err
-		}
-		if !bytes.Equal(root[:], headHeader.Root[:]) {
-			return fmt.Errorf("regenerated root %s is not equal to head root %s", root, headHeader.Root)
-		}
-		log.Info("Regenerated intermediate hashes")
-		return nil
+	// Run InterHash stage.
+	var interHashProgress uint64
+	if err = db.View(ctx, func(tx kv.Tx) error {
+		interHashProgress, err = stages.GetStageProgress(tx, stages.IntermediateHashes)
+		return err
 	}); err != nil {
 		panic(err)
 	}
+	if interHashProgress < headNumber {
+		if err = db.Update(ctx, func(tx kv.RwTx) error {
+			cfg := stagedsync.StageTrieCfg(db, true, true, false, dirs.Tmp, nil, nil, historyV3, nil)
+			var root libcommon.Hash
+			if root, err = stagedsync.RegenerateIntermediateHashes("InterHash", tx, cfg, headHeader.Root, ctx); err != nil {
+				return err
+			}
+			if !bytes.Equal(root[:], headHeader.Root[:]) {
+				return fmt.Errorf("regenerated root %s is not equal to head root %s", root, headHeader.Root)
+			}
+			return stages.SaveStageProgress(tx, stages.IntermediateHashes, headNumber)
+		}); err != nil {
+			panic(err)
+		}
+		log.Info("Finished IntermediateHash", "headNumber", headNumber)
+	}
+
+	log.Info("All done", "headNumber", headNumber, "headHash", headHash)
 }
