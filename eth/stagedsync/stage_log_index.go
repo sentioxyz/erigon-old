@@ -326,19 +326,46 @@ func promoteLogIndex(logPrefix string, tx kv.RwTx, start uint64, endBlock uint64
 		})
 	}
 	if cfg.bitmapDB2 != nil {
+		dualWrite := true
+		costBitmapDB2 := time.Duration(0)
+		costBitmapDB := time.Duration(0)
 		batch := cfg.bitmapDB2.NewAutoBatch(256 * 1024 * 1024)
 		defer batch.Close()
 		var bitmapDB2LoadTopic = func(k []byte, v []byte, table etl.CurrentTableReader, next etl.LoadNextFunc) error {
+			startTime := time.Now()
 			if _, err := currentBitmap.FromBuffer(v); err != nil {
 				return err
 			}
-			return batch.UpsertBitmap(kv.LogTopicIndex, k, currentBitmap)
+			if err := batch.UpsertBitmap(kv.LogTopicIndex, k, currentBitmap); err != nil {
+				return err
+			}
+			costBitmapDB2 += time.Since(startTime)
+			if dualWrite {
+				startTime = time.Now()
+				if err := loaderFunc(k, v, table, next); err != nil {
+					return err
+				}
+				costBitmapDB += time.Since(startTime)
+			}
+			return nil
 		}
 		var bitmapDB2LoadAddress = func(k []byte, v []byte, table etl.CurrentTableReader, next etl.LoadNextFunc) error {
+			startTime := time.Now()
 			if _, err := currentBitmap.FromBuffer(v); err != nil {
 				return err
 			}
-			return batch.UpsertBitmap(kv.LogAddressIndex, k, currentBitmap)
+			if err := batch.UpsertBitmap(kv.LogAddressIndex, k, currentBitmap); err != nil {
+				return err
+			}
+			costBitmapDB2 += time.Since(startTime)
+			if dualWrite {
+				startTime = time.Now()
+				if err := loaderFunc(k, v, table, next); err != nil {
+					return err
+				}
+				costBitmapDB += time.Since(startTime)
+			}
+			return nil
 		}
 		if err := collectorTopics.Load(tx, kv.LogTopicIndex, bitmapDB2LoadTopic, etl.TransformArgs{Quit: quit}); err != nil {
 			return err
@@ -346,7 +373,13 @@ func promoteLogIndex(logPrefix string, tx kv.RwTx, start uint64, endBlock uint64
 		if err := collectorAddrs.Load(tx, kv.LogAddressIndex, bitmapDB2LoadAddress, etl.TransformArgs{Quit: quit}); err != nil {
 			return err
 		}
-		return batch.Commit()
+		commitStartTime := time.Now()
+		if err := batch.Commit(); err != nil {
+			return err
+		}
+		costBitmapDB2 += time.Since(commitStartTime)
+		log.Info("LogIndex commit", "bitmapDBCost", costBitmapDB, "bitmapDB2Cost", costBitmapDB2)
+		return nil
 	} else {
 		if err := collectorTopics.Load(tx, kv.LogTopicIndex, loaderFunc, etl.TransformArgs{Quit: quit}); err != nil {
 			return err
