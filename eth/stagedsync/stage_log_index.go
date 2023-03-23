@@ -20,6 +20,7 @@ import (
 	"golang.org/x/exp/slices"
 
 	"github.com/ledgerwatch/erigon/common/dbutils"
+	"github.com/ledgerwatch/erigon/core/bitmapdb2"
 	"github.com/ledgerwatch/erigon/core/types"
 	"github.com/ledgerwatch/erigon/core/worker"
 	"github.com/ledgerwatch/erigon/ethdb/cbor"
@@ -37,15 +38,17 @@ type LogIndexCfg struct {
 	prune      prune.Mode
 	bufLimit   datasize.ByteSize
 	flushEvery time.Duration
+	bitmapDB2  *bitmapdb2.DB
 }
 
-func StageLogIndexCfg(db kv.RwDB, prune prune.Mode, tmpDir string) LogIndexCfg {
+func StageLogIndexCfg(db kv.RwDB, prune prune.Mode, tmpDir string, bitmapDB2 *bitmapdb2.DB) LogIndexCfg {
 	return LogIndexCfg{
 		db:         db,
 		prune:      prune,
 		bufLimit:   bitmapsBufLimit,
 		flushEvery: bitmapsFlushEvery,
 		tmpdir:     tmpDir,
+		bitmapDB2:  bitmapDB2,
 	}
 }
 
@@ -322,16 +325,37 @@ func promoteLogIndex(logPrefix string, tx kv.RwTx, start uint64, endBlock uint64
 			return next(k, chunkKey, buf.Bytes())
 		})
 	}
-
-	if err := collectorTopics.Load(tx, kv.LogTopicIndex, loaderFunc, etl.TransformArgs{Quit: quit}); err != nil {
-		return err
+	if cfg.bitmapDB2 != nil {
+		batch := cfg.bitmapDB2.NewAutoBatch(256 * 1024 * 1024)
+		defer batch.Close()
+		var bitmapDB2LoadTopic = func(k []byte, v []byte, table etl.CurrentTableReader, next etl.LoadNextFunc) error {
+			if _, err := currentBitmap.FromBuffer(v); err != nil {
+				return err
+			}
+			return batch.UpsertBitmap(kv.LogTopicIndex, k, currentBitmap)
+		}
+		var bitmapDB2LoadAddress = func(k []byte, v []byte, table etl.CurrentTableReader, next etl.LoadNextFunc) error {
+			if _, err := currentBitmap.FromBuffer(v); err != nil {
+				return err
+			}
+			return batch.UpsertBitmap(kv.LogAddressIndex, k, currentBitmap)
+		}
+		if err := collectorTopics.Load(tx, kv.LogTopicIndex, bitmapDB2LoadTopic, etl.TransformArgs{Quit: quit}); err != nil {
+			return err
+		}
+		if err := collectorAddrs.Load(tx, kv.LogAddressIndex, bitmapDB2LoadAddress, etl.TransformArgs{Quit: quit}); err != nil {
+			return err
+		}
+		return batch.Commit()
+	} else {
+		if err := collectorTopics.Load(tx, kv.LogTopicIndex, loaderFunc, etl.TransformArgs{Quit: quit}); err != nil {
+			return err
+		}
+		if err := collectorAddrs.Load(tx, kv.LogAddressIndex, loaderFunc, etl.TransformArgs{Quit: quit}); err != nil {
+			return err
+		}
+		return nil
 	}
-
-	if err := collectorAddrs.Load(tx, kv.LogAddressIndex, loaderFunc, etl.TransformArgs{Quit: quit}); err != nil {
-		return err
-	}
-
-	return nil
 }
 
 func UnwindLogIndex(u *UnwindState, s *StageState, tx kv.RwTx, cfg LogIndexCfg, ctx context.Context) (err error) {
