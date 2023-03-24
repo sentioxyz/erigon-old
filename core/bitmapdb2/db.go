@@ -2,13 +2,12 @@ package bitmapdb2
 
 import (
 	"bytes"
+	"fmt"
 	"sync"
 	"time"
 
-	"github.com/RoaringBitmap/roaring"
 	"github.com/cockroachdb/pebble"
-	"github.com/ledgerwatch/erigon-lib/common"
-	"github.com/ledgerwatch/erigon-lib/kv/bitmapdb"
+	"github.com/dgraph-io/sroar"
 	"github.com/ledgerwatch/log/v3"
 )
 
@@ -31,7 +30,9 @@ type Batch struct {
 
 func NewBitmapDB2(datadir string, sliceSize uint64) *DB {
 	path := datadir + "/bitmapdb2"
-	ldb, err := pebble.Open(path, &pebble.Options{})
+	ldb, err := pebble.Open(path, &pebble.Options{
+		MemTableSize: 16 * 1024 * 1024,
+	})
 	if err != nil {
 		panic(err)
 	}
@@ -61,21 +62,17 @@ func (db *DB) NewAutoBatch(txSize int) *Batch {
 	}
 }
 
-func (db *DB) GetBitmap(bucket string, key []byte, from, to uint64) (*roaring.Bitmap, error) {
+func (db *DB) GetBitmap(bucket string, key []byte, from, to uint64) (*sroar.Bitmap, error) {
 	prefix := bitmapRowPrefix(bucket, key)
 	iter := db.ldb.NewIter(nil)
 	defer iter.Close()
 
-	var slices []*roaring.Bitmap
+	var slices []*sroar.Bitmap
 	for iter.SeekGE(bitmapRowKey(bucket, key, from)); iter.Valid(); iter.Next() {
 		if !bytes.HasPrefix(iter.Key(), prefix) {
 			break
 		}
-		slice := roaring.New()
-		_, err := slice.FromBuffer(common.Copy(iter.Value()))
-		if err != nil {
-			return nil, err
-		}
+		slice := sroar.FromBufferWithCopy(iter.Value())
 		slices = append(slices, slice)
 
 		// If range of the current slice contains to, we can stop.
@@ -84,20 +81,27 @@ func (db *DB) GetBitmap(bucket string, key []byte, from, to uint64) (*roaring.Bi
 			break
 		}
 	}
-	return roaring.FastOr(slices...), nil
+	return sroar.FastOr(slices...), nil
 }
 
 func (b *Batch) Close() error {
 	b.mutex.Lock()
 	defer b.mutex.Unlock()
 
-	return b.batch.Close()
+	if err := b.batch.Close(); err != nil {
+		return err
+	}
+	b.batch = nil
+	return nil
 }
 
 func (b *Batch) Commit() error {
 	b.mutex.Lock()
 	defer b.mutex.Unlock()
 
+	if b.batch == nil {
+		return fmt.Errorf("batch is closed")
+	}
 	return b.commitInternal()
 }
 
@@ -105,20 +109,19 @@ func (b *Batch) TruncateBitmap(bucket string, key []byte, from uint64) error {
 	b.mutex.Lock()
 	defer b.mutex.Unlock()
 
+	if b.batch == nil {
+		return fmt.Errorf("batch is closed")
+	}
 	prefix := bitmapRowPrefix(bucket, key)
 	iter := b.batch.NewIter(nil)
 	defer iter.Close()
 
-	var slices []*roaring.Bitmap
+	var slices []*sroar.Bitmap
 	for iter.SeekGE(bitmapRowKey(bucket, key, from)); iter.Valid(); iter.Next() {
 		if !bytes.HasPrefix(iter.Key(), prefix) {
 			break
 		}
-		slice := roaring.New()
-		_, err := slice.FromBuffer(common.Copy(iter.Value()))
-		if err != nil {
-			return err
-		}
+		slice := sroar.FromBufferWithCopy(iter.Value())
 		slices = append(slices, slice)
 
 		if err := b.batch.Delete(iter.Key(), nil); err != nil {
@@ -126,8 +129,8 @@ func (b *Batch) TruncateBitmap(bucket string, key []byte, from uint64) error {
 		}
 	}
 
-	value := roaring.FastOr(slices...)
-	if !value.IsEmpty() {
+	value := sroar.FastOr(slices...)
+	if !value.IsEmpty() && value.Maximum() >= from {
 		value.RemoveRange(from, uint64(value.Maximum()+1))
 	}
 	if !value.IsEmpty() {
@@ -138,13 +141,17 @@ func (b *Batch) TruncateBitmap(bucket string, key []byte, from uint64) error {
 	return b.autoCommit()
 }
 
-func (b *Batch) UpsertBitmap(bucket string, key []byte, value *roaring.Bitmap) error {
+// Value may be modified in place.  Caller must not use the value after calling this method.
+func (b *Batch) UpsertBitmap(bucket string, key []byte, value *sroar.Bitmap) error {
 	b.mutex.Lock()
 	defer b.mutex.Unlock()
+	if b.batch == nil {
+		return fmt.Errorf("batch is closed")
+	}
 	return b.upsertBitmapInternal(bucket, key, value)
 }
 
-func (b *Batch) upsertBitmapInternal(bucket string, key []byte, value *roaring.Bitmap) error {
+func (b *Batch) upsertBitmapInternal(bucket string, key []byte, value *sroar.Bitmap) error {
 	if value.IsEmpty() {
 		return nil
 	}
@@ -152,17 +159,13 @@ func (b *Batch) upsertBitmapInternal(bucket string, key []byte, value *roaring.B
 	iter := b.batch.NewIter(nil)
 	defer iter.Close()
 
-	var slices []*roaring.Bitmap
+	var slices []*sroar.Bitmap
 	slices = append(slices, value)
 	for iter.SeekGE(bitmapRowKey(bucket, key, uint64(value.Minimum()))); iter.Valid(); iter.Next() {
 		if !bytes.HasPrefix(iter.Key(), prefix) {
 			break
 		}
-		slice := roaring.New()
-		_, err := slice.FromBuffer(common.Copy(iter.Value()))
-		if err != nil {
-			return err
-		}
+		slice := sroar.FromBufferWithCopy(iter.Value())
 		slices = append(slices, slice)
 
 		if err := b.batch.Delete(iter.Key(), nil); err != nil {
@@ -170,22 +173,20 @@ func (b *Batch) upsertBitmapInternal(bucket string, key []byte, value *roaring.B
 		}
 	}
 
-	newValue := roaring.FastOr(slices...)
-	var buf = bytes.NewBuffer(nil)
-	if err := bitmapdb.WalkChunks(newValue, b.db.sliceSize, func(chunk *roaring.Bitmap, isLast bool) error {
-		buf.Reset()
-		if _, err := chunk.WriteTo(buf); err != nil {
-			return err
-		}
+	newValue := sroar.FastOr(slices...)
+	externalSize := func(start, end uint64) uint64 { return 0 }
+	newSlices := newValue.Split(externalSize, b.db.sliceSize)
+	for idx, slice := range newSlices {
 		var rowKey []byte
+		isLast := idx == len(newSlices)-1
 		if isLast {
 			rowKey = bitmapRowKey(bucket, key, ^uint64(0))
 		} else {
-			rowKey = bitmapRowKey(bucket, key, uint64(chunk.Maximum()))
+			rowKey = bitmapRowKey(bucket, key, uint64(slice.Maximum()))
 		}
-		return b.batch.Set(rowKey, buf.Bytes(), nil)
-	}); err != nil {
-		return err
+		if err := b.batch.Set(rowKey, slice.ToBuffer(), nil); err != nil {
+			return err
+		}
 	}
 	return b.autoCommit()
 }
@@ -194,7 +195,7 @@ func (b *Batch) commitInternal() error {
 	startTime := time.Now()
 	txSize := b.batch.Len()
 	defer func() {
-		log.Debug("Batch commit done", "time", time.Since(startTime), "txSize", txSize)
+		log.Info("Batch commit done", "time", time.Since(startTime), "txSize", txSize)
 	}()
 	return b.batch.Commit(nil)
 }

@@ -83,24 +83,21 @@ func (api *APIImpl) DumpBitmap(ctx context.Context, bucket string, key hexutil.B
 	}
 	defer tx.Rollback()
 
-	var bitmaps []*roaring.Bitmap
-	bitmapDB2 := api._bitmapDB2
-	if bitmapDB2 != nil {
-		m, err := bitmapDB2.GetBitmap(bucket, key[:], from, to)
-		if err != nil {
-			return nil, err
-		}
-		bitmaps = append(bitmaps, m)
-	}
 	m, err := bitmapdb.Get(tx, bucket, key[:], uint32(from), uint32(to))
 	if err != nil {
 		return nil, err
 	}
-	bitmaps = append(bitmaps, m)
+	bitmapDB2 := api._bitmapDB2
+	if bitmapDB2 != nil {
+		sr, err := bitmapDB2.GetBitmap(bucket, key[:], from, to)
+		if err != nil {
+			return nil, err
+		}
+		bitmapdb2.SRToR(m, sr, false)
+	}
 
 	var result []uint64
-	bitmap := roaring.FastOr(bitmaps...)
-	bitmap.Iterate(func(i uint32) bool {
+	m.Iterate(func(i uint32) bool {
 		result = append(result, uint64(i))
 		return true
 	})
@@ -269,16 +266,16 @@ func getTopicsBitmap(c kv.Tx, topics [][]common.Hash, from, to uint64, bitmapDB2
 	for _, sub := range topics {
 		var bitmapForORing []*roaring.Bitmap
 		for _, topic := range sub {
-			if bitmapDB2 != nil {
-				m, err := bitmapDB2.GetBitmap(kv.LogTopicIndex, topic[:], from, to)
-				if err != nil {
-					return nil, err
-				}
-				bitmapForORing = append(bitmapForORing, m)
-			}
 			m, err := bitmapdb.Get(c, kv.LogTopicIndex, topic[:], uint32(from), uint32(to))
 			if err != nil {
 				return nil, err
+			}
+			if bitmapDB2 != nil {
+				sr, err := bitmapDB2.GetBitmap(kv.LogTopicIndex, topic[:], from, to)
+				if err != nil {
+					return nil, err
+				}
+				bitmapdb2.SRToR(m, sr, false)
 			}
 			bitmapForORing = append(bitmapForORing, m)
 		}
@@ -306,16 +303,16 @@ func getAddrsBitmap(tx kv.Tx, addrs []common.Address, from, to uint64, bitmapDB2
 		}
 	}()
 	for _, addr := range addrs {
-		if bitmapDB2 != nil {
-			m, err := bitmapDB2.GetBitmap(kv.LogAddressIndex, addr[:], from, to)
-			if err != nil {
-				return nil, err
-			}
-			rx = append(rx, m)
-		}
 		m, err := bitmapdb.Get(tx, kv.LogAddressIndex, addr[:], uint32(from), uint32(to))
 		if err != nil {
 			return nil, err
+		}
+		if bitmapDB2 != nil {
+			sr, err := bitmapDB2.GetBitmap(kv.LogAddressIndex, addr[:], from, to)
+			if err != nil {
+				return nil, err
+			}
+			bitmapdb2.SRToR(m, sr, false)
 		}
 		rx = append(rx, m)
 	}
