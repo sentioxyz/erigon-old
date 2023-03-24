@@ -6,7 +6,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/dgraph-io/sroar"
+	"github.com/RoaringBitmap/roaring"
 )
 
 func TestUpsertBitmap(t *testing.T) {
@@ -15,22 +15,22 @@ func TestUpsertBitmap(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer os.RemoveAll(datadir)
-	db := NewBitmapDB2(datadir, 512)
+	db := NewBitmapDB2(datadir)
 	defer db.Close()
 
 	seed := int64(497777)
 	r := rand.New(rand.NewSource(seed))
 
-	truthBitmaps := make([]*sroar.Bitmap, 16)
+	truthBitmaps := make([]*roaring.Bitmap, 16)
 	for i := 0; i < 16; i++ {
-		truthBitmaps[i] = sroar.NewBitmap()
+		truthBitmaps[i] = roaring.New()
 	}
 
 	batch := db.NewBatch()
 	for i := 0; i < 500; i++ {
-		bitmap := sroar.NewBitmap()
+		bitmap := roaring.NewBitmap()
 		for j := 0; j < 100; j++ {
-			bitmap.Set(uint64(r.Int31n(1_000_000)))
+			bitmap.Add(uint32(r.Int31n(1_000_000)))
 		}
 		removeFrom := 1_000_000 - 1000*uint64(r.Int63n(100))
 		batch.TruncateBitmap("test", []byte{byte(i % 16)}, removeFrom)
@@ -64,23 +64,23 @@ func TestParallelLoad(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer os.RemoveAll(datadir)
-	db := NewBitmapDB2(datadir, uint64(DefaultSliceSize))
+	db := NewBitmapDB2(datadir)
 	defer db.Close()
 
 	seed := int64(6666666)
 	r := rand.New(rand.NewSource(seed))
 
-	truthBitmaps := make([]*sroar.Bitmap, 16)
+	truthBitmaps := make([]*roaring.Bitmap, 16)
 	for i := 0; i < 16; i++ {
-		truthBitmaps[i] = sroar.NewBitmap()
+		truthBitmaps[i] = roaring.NewBitmap()
 	}
 
 	pl := NewParallelLoader(db, 7, 4096, 16)
 	defer pl.Close()
 	for i := 0; i < 1000; i++ {
-		bitmap := sroar.NewBitmap()
+		bitmap := roaring.NewBitmap()
 		for j := 0; j < 100; j++ {
-			bitmap.Set(uint64(r.Int31n(1_000_000)))
+			bitmap.Add(uint32(r.Int31n(1_000_000)))
 		}
 		truth := truthBitmaps[i%16]
 		pl.Load("test", []byte{byte(i % 16)}, bitmap)

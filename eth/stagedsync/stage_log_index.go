@@ -10,7 +10,6 @@ import (
 
 	"github.com/RoaringBitmap/roaring"
 	"github.com/c2h5oh/datasize"
-	"github.com/dgraph-io/sroar"
 	libcommon "github.com/ledgerwatch/erigon-lib/common"
 	"github.com/ledgerwatch/erigon-lib/common/dbg"
 	"github.com/ledgerwatch/erigon-lib/common/hexutility"
@@ -117,8 +116,8 @@ func promoteLogIndex(logPrefix string, tx kv.RwTx, start uint64, endBlock uint64
 	logEvery := time.NewTicker(30 * time.Second)
 	defer logEvery.Stop()
 
-	topics := map[string]*sroar.Bitmap{}
-	addresses := map[string]*sroar.Bitmap{}
+	topics := map[string]*roaring.Bitmap{}
+	addresses := map[string]*roaring.Bitmap{}
 	checkFlushEvery := time.NewTicker(cfg.flushEvery)
 	defer checkFlushEvery.Stop()
 
@@ -138,19 +137,19 @@ func promoteLogIndex(logPrefix string, tx kv.RwTx, start uint64, endBlock uint64
 				topicStr := string(topic.Bytes())
 				m, ok := topics[topicStr]
 				if !ok {
-					m = sroar.NewBitmap()
+					m = roaring.New()
 					topics[topicStr] = m
 				}
-				m.Set(blockNum)
+				m.Add(uint32(blockNum))
 			}
 
 			accStr := string(l.Address.Bytes())
 			m, ok := addresses[accStr]
 			if !ok {
-				m = sroar.NewBitmap()
+				m = roaring.New()
 				addresses[accStr] = m
 			}
-			m.Set(blockNum)
+			m.Add(uint32(blockNum))
 		}
 	}
 
@@ -206,14 +205,14 @@ func promoteLogIndex(logPrefix string, tx kv.RwTx, start uint64, endBlock uint64
 					if err := flushBitmaps(collectorTopics, topics); err != nil {
 						return err
 					}
-					topics = map[string]*sroar.Bitmap{}
+					topics = map[string]*roaring.Bitmap{}
 				}
 
 				if needFlush(addresses, cfg.bufLimit) {
 					if err := flushBitmaps(collectorAddrs, addresses); err != nil {
 						return err
 					}
-					addresses = map[string]*sroar.Bitmap{}
+					addresses = map[string]*roaring.Bitmap{}
 				}
 			case part, ok := <-resChan:
 				if !ok {
@@ -263,14 +262,14 @@ func promoteLogIndex(logPrefix string, tx kv.RwTx, start uint64, endBlock uint64
 					if err := flushBitmaps(collectorTopics, topics); err != nil {
 						return err
 					}
-					topics = map[string]*sroar.Bitmap{}
+					topics = map[string]*roaring.Bitmap{}
 				}
 
 				if needFlush(addresses, cfg.bufLimit) {
 					if err := flushBitmaps(collectorAddrs, addresses); err != nil {
 						return err
 					}
-					addresses = map[string]*sroar.Bitmap{}
+					addresses = map[string]*roaring.Bitmap{}
 				}
 			}
 			var ll types.Logs
@@ -313,8 +312,9 @@ func promoteLogIndex(logPrefix string, tx kv.RwTx, start uint64, endBlock uint64
 				return fmt.Errorf("couldn't read last log index chunk: %w, len(lastChunkBytes)=%d", err, len(lastChunkBytes))
 			}
 		}
-
-		bitmapdb2.SRBytesToR(currentBitmap, v, true)
+		if _, err := currentBitmap.FromBuffer(v); err != nil {
+			return err
+		}
 		currentBitmap.Or(lastChunk) // merge last existing chunk from db - next loop will overwrite it
 		return bitmapdb.WalkChunkWithKeys(k, currentBitmap, bitmapdb.ChunkLimit, func(chunkKey []byte, chunk *roaring.Bitmap) error {
 			buf.Reset()
@@ -330,7 +330,10 @@ func promoteLogIndex(logPrefix string, tx kv.RwTx, start uint64, endBlock uint64
 		pl := bitmapdb2.NewParallelLoader(cfg.bitmapDB2, 16, 64*1024*1024, 64)
 		defer pl.Close()
 		var bitmapDB2LoadTopic = func(k []byte, v []byte, table etl.CurrentTableReader, next etl.LoadNextFunc) error {
-			if err := pl.Load(kv.LogTopicIndex, k, sroar.FromBuffer(v)); err != nil {
+			if _, err := currentBitmap.FromBuffer(v); err != nil {
+				return err
+			}
+			if err := pl.Load(kv.LogTopicIndex, k, currentBitmap); err != nil {
 				return err
 			}
 			if dualWrite {
@@ -343,7 +346,10 @@ func promoteLogIndex(logPrefix string, tx kv.RwTx, start uint64, endBlock uint64
 			return nil
 		}
 		var bitmapDB2LoadAddress = func(k []byte, v []byte, table etl.CurrentTableReader, next etl.LoadNextFunc) error {
-			if err := pl.Load(kv.LogAddressIndex, k, sroar.FromBuffer(v)); err != nil {
+			if _, err := currentBitmap.FromBuffer(v); err != nil {
+				return err
+			}
+			if err := pl.Load(kv.LogAddressIndex, k, currentBitmap); err != nil {
 				return err
 			}
 			if dualWrite {
@@ -445,21 +451,26 @@ func unwindLogIndex(logPrefix string, db kv.RwTx, to uint64, cfg LogIndexCfg, qu
 	return nil
 }
 
-func needFlush(bitmaps map[string]*sroar.Bitmap, memLimit datasize.ByteSize) bool {
+func needFlush(bitmaps map[string]*roaring.Bitmap, memLimit datasize.ByteSize) bool {
 	sz := uint64(0)
 	for _, m := range bitmaps {
-		sz += uint64(len(m.ToBuffer()) * 2) // for golang's overhead
+		sz += m.GetSizeInBytes() * 2 // for golang's overhead
 	}
 	const memoryNeedsForKey = 32 * 2 * 2 //  len(key) * (string and bytes) overhead * go's map overhead
 	return uint64(len(bitmaps)*memoryNeedsForKey)+sz > uint64(memLimit)
 }
 
-func flushBitmaps(c *etl.Collector, inMem map[string]*sroar.Bitmap) error {
+func flushBitmaps(c *etl.Collector, inMem map[string]*roaring.Bitmap) error {
 	for k, v := range inMem {
+		v.RunOptimize()
 		if v.GetCardinality() == 0 {
 			continue
 		}
-		if err := c.Collect([]byte(k), v.ToBuffer()); err != nil {
+		newV := bytes.NewBuffer(make([]byte, 0, v.GetSerializedSizeInBytes()))
+		if _, err := v.WriteTo(newV); err != nil {
+			return err
+		}
+		if err := c.Collect([]byte(k), newV.Bytes()); err != nil {
 			return err
 		}
 	}

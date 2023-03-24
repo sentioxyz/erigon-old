@@ -1352,7 +1352,7 @@ func newSync(ctx context.Context, db kv.RwDB, miningConfig *params.MiningConfig)
 
 	var bitmapDB2 *bitmapdb2.DB
 	if cfg.BitmapDB2 {
-		bitmapDB2 = bitmapdb2.NewBitmapDB2(datadirCli, uint64(bitmapdb2.DefaultSliceSize))
+		bitmapDB2 = bitmapdb2.NewBitmapDB2(datadirCli)
 	}
 	engine := initConsensusEngine(chainConfig, cfg.Dirs.DataDir, db)
 

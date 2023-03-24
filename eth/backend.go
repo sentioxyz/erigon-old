@@ -213,7 +213,7 @@ func New(stack *node.Node, config *ethconfig.Config, logger log.Logger) (*Ethere
 
 	var bitmapDB2 *bitmapdb2.DB
 	if config.BitmapDB2 {
-		bitmapDB2 = bitmapdb2.NewBitmapDB2(stack.DataDir(), uint64(bitmapdb2.DefaultSliceSize))
+		bitmapDB2 = bitmapdb2.NewBitmapDB2(stack.DataDir())
 	}
 
 	var currentBlock *types.Block
