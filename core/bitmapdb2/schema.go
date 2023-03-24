@@ -163,6 +163,12 @@ func (c *container) Add(v uint32) {
 			return
 		}
 		array := toUint16Slice(c.Buffer[8:])
+		// Fast path for appending to end of array.
+		if len(array) > 0 && array[len(array)-1] < lo {
+			c.Buffer = append(c.Buffer, 0, 0)
+			binary.LittleEndian.PutUint16(c.Buffer[len(c.Buffer)-2:], lo)
+			return
+		}
 		idx := sort.Search(len(array), func(i int) bool { return array[i] >= lo })
 		if idx < len(array) && array[idx] == lo {
 			return

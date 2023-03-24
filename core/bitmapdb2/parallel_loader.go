@@ -26,9 +26,8 @@ type parallelLoadWork struct {
 }
 
 type ParallelLoadSummary struct {
-	TotalTime             time.Duration
-	NumPuts               uint64
-	TotalValueCardinality uint64
+	TotalTime time.Duration
+	NumPuts   uint64
 }
 
 type ParallelLoader struct {
@@ -106,7 +105,6 @@ func (l *ParallelLoader) shardWork(shardIdx int) {
 			continue
 		}
 		shard.summary.NumPuts++
-		shard.summary.TotalValueCardinality += uint64(task.value.GetCardinality())
 		if err := batch.UpsertBitmap(task.bucket, task.key, task.value); err != nil {
 			lastErr = err
 			shard.errCh <- err
@@ -149,9 +147,8 @@ func (l *ParallelLoader) Commit() error {
 func (s *ParallelLoadSummary) Add(other ParallelLoadSummary) {
 	s.TotalTime += other.TotalTime
 	s.NumPuts += other.NumPuts
-	s.TotalValueCardinality += other.TotalValueCardinality
 }
 
 func (s *ParallelLoadSummary) String() string {
-	return fmt.Sprintf("total time: %s, num puts: %d, total value cardinality: %d", s.TotalTime, s.NumPuts, s.TotalValueCardinality)
+	return fmt.Sprintf("total time: %s, num puts: %d", s.TotalTime, s.NumPuts)
 }
