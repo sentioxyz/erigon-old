@@ -133,6 +133,11 @@ func (l *ParallelLoader) Commit() error {
 		}
 		shard.ch <- &parallelLoadTask{commit: true}
 		close(shard.ch)
+	}
+	for idx, shard := range l.shards {
+		if shard.batch == nil {
+			return fmt.Errorf("shard %d is already closed", idx)
+		}
 		if err := <-shard.doneCh; err != nil {
 			errs = append(errs, err)
 		}

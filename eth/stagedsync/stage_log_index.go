@@ -325,7 +325,7 @@ func promoteLogIndex(logPrefix string, tx kv.RwTx, start uint64, endBlock uint64
 		})
 	}
 	if cfg.bitmapDB2 != nil {
-		dualWrite := true
+		dualWrite := false
 		costBitmapDB := time.Duration(0)
 		pl := bitmapdb2.NewParallelLoader(cfg.bitmapDB2, 16, 64*1024*1024, 64)
 		defer pl.Close()
