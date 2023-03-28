@@ -995,7 +995,7 @@ func stageCallTraces(db kv.RwDB, ctx context.Context) error {
 	}
 	log.Info("ID call traces", "progress", s.BlockNumber)
 
-	cfg := stagedsync.StageCallTracesCfg(db, pm, block, dirs.Tmp)
+	cfg := stagedsync.StageCallTracesCfg(db, pm, block, dirs.Tmp, nil)
 
 	if unwind > 0 {
 		u := sync.NewUnwindState(stages.CallTraces, s.BlockNumber-unwind, s.BlockNumber)
@@ -1056,7 +1056,7 @@ func stageHistory(db kv.RwDB, ctx context.Context) error {
 	log.Info("ID acc history", "progress", stageAcc.BlockNumber)
 	log.Info("ID storage history", "progress", stageStorage.BlockNumber)
 
-	cfg := stagedsync.StageHistoryCfg(db, pm, dirs.Tmp)
+	cfg := stagedsync.StageHistoryCfg(db, pm, dirs.Tmp, nil)
 	if unwind > 0 { //nolint:staticcheck
 		u := sync.NewUnwindState(stages.StorageHistoryIndex, stageStorage.BlockNumber-unwind, stageStorage.BlockNumber)
 		if err := stagedsync.UnwindStorageHistoryIndex(u, stageStorage, tx, cfg, ctx); err != nil {

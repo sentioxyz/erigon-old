@@ -1,19 +1,23 @@
 package bitmapdb2
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
 	"time"
 
 	"github.com/RoaringBitmap/roaring"
+	"github.com/RoaringBitmap/roaring/roaring64"
 	"github.com/ledgerwatch/erigon-lib/common"
+	"github.com/ledgerwatch/erigon-lib/etl"
 )
 
 type parallelLoadTask struct {
-	commit bool
-	bucket string
-	key    []byte
-	value  *roaring.Bitmap
+	commit  bool
+	bucket  string
+	key     []byte
+	value   *roaring.Bitmap
+	value64 *roaring64.Bitmap
 }
 
 type parallelLoadWork struct {
@@ -64,15 +68,8 @@ func (l *ParallelLoader) computeShard(key []byte) int {
 	return int(idx)
 }
 
-// Loads a bitmap into the database.
-// Parameters can be modified after the call returns.
-func (l *ParallelLoader) Load(bucket string, key []byte, value *roaring.Bitmap) error {
-	// Make sure new value refers to no byte buffers of the old value.
-	valueCopy := value.Clone()
-	valueCopy.CloneCopyOnWriteContainers()
-
-	task := &parallelLoadTask{false, bucket, common.Copy(key), valueCopy}
-	shard := l.shards[l.computeShard(key)]
+func (l *ParallelLoader) sendTask(task *parallelLoadTask) error {
+	shard := l.shards[l.computeShard(task.key)]
 	select {
 	default:
 	case err := <-shard.errCh:
@@ -80,6 +77,49 @@ func (l *ParallelLoader) Load(bucket string, key []byte, value *roaring.Bitmap) 
 	}
 	shard.ch <- task
 	return nil
+}
+
+// Loads a bitmap into the database.
+// Parameters can be modified after the call returns.
+func (l *ParallelLoader) Load(bucket string, key []byte, value *roaring.Bitmap) error {
+	// Make sure new value refers to no byte buffers of the old value.
+	valueCopy := value.Clone()
+	valueCopy.CloneCopyOnWriteContainers()
+	return l.sendTask(&parallelLoadTask{false, bucket, common.Copy(key), valueCopy, nil})
+}
+
+func (l *ParallelLoader) Load64(bucket string, key []byte, value64 *roaring64.Bitmap) error {
+	// Make sure new value refers to no byte buffers of the old value.
+	valueCopy := value64.Clone()
+	valueCopy.CloneCopyOnWriteContainers()
+	return l.sendTask(&parallelLoadTask{false, bucket, common.Copy(key), nil, valueCopy})
+}
+
+func (l *ParallelLoader) ETLLoadFunc(bucket string) func(k []byte, v []byte, table etl.CurrentTableReader, next etl.LoadNextFunc) error {
+	var bitmap = roaring.New()
+	return func(k []byte, v []byte, table etl.CurrentTableReader, next etl.LoadNextFunc) error {
+		if _, err := bitmap.FromBuffer(v); err != nil {
+			return err
+		}
+		if err := l.Load(bucket, k, bitmap); err != nil {
+			return err
+		}
+		return nil
+	}
+}
+
+func (l *ParallelLoader) ETLLoadFunc64(bucket string) func(k []byte, v []byte, table etl.CurrentTableReader, next etl.LoadNextFunc) error {
+	var bitmap = roaring64.New()
+	return func(k []byte, v []byte, table etl.CurrentTableReader, next etl.LoadNextFunc) error {
+		buf := bytes.NewReader(v)
+		if _, err := bitmap.ReadFrom(buf); err != nil {
+			return err
+		}
+		if err := l.Load64(bucket, k, bitmap); err != nil {
+			return err
+		}
+		return nil
+	}
 }
 
 func (l *ParallelLoader) shardWork(shardIdx int) {
@@ -104,11 +144,19 @@ func (l *ParallelLoader) shardWork(shardIdx int) {
 			// If there was an error, ignore all the following tasks.
 			continue
 		}
-		shard.summary.NumPuts++
-		if err := batch.UpsertBitmap(task.bucket, task.key, task.value); err != nil {
-			lastErr = err
-			shard.errCh <- err
+		if task.value != nil {
+			if err := batch.UpsertBitmap(task.bucket, task.key, task.value); err != nil {
+				lastErr = err
+				shard.errCh <- err
+			}
 		}
+		if task.value64 != nil {
+			if err := batch.UpsertBitmap64(task.bucket, task.key, task.value64); err != nil {
+				lastErr = err
+				shard.errCh <- err
+			}
+		}
+		shard.summary.NumPuts++
 		shard.summary.TotalTime += time.Since(startTime)
 	}
 }

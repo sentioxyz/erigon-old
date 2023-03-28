@@ -325,52 +325,20 @@ func promoteLogIndex(logPrefix string, tx kv.RwTx, start uint64, endBlock uint64
 		})
 	}
 	if cfg.bitmapDB2 != nil {
-		dualWrite := false
-		costBitmapDB := time.Duration(0)
 		pl := bitmapdb2.NewParallelLoader(cfg.bitmapDB2, 16, 64*1024*1024, 64)
 		defer pl.Close()
-		var bitmapDB2LoadTopic = func(k []byte, v []byte, table etl.CurrentTableReader, next etl.LoadNextFunc) error {
-			if _, err := currentBitmap.FromBuffer(v); err != nil {
-				return err
-			}
-			if err := pl.Load(kv.LogTopicIndex, k, currentBitmap); err != nil {
-				return err
-			}
-			if dualWrite {
-				startTime := time.Now()
-				if err := loaderFunc(k, v, table, next); err != nil {
-					return err
-				}
-				costBitmapDB += time.Since(startTime)
-			}
-			return nil
-		}
-		var bitmapDB2LoadAddress = func(k []byte, v []byte, table etl.CurrentTableReader, next etl.LoadNextFunc) error {
-			if _, err := currentBitmap.FromBuffer(v); err != nil {
-				return err
-			}
-			if err := pl.Load(kv.LogAddressIndex, k, currentBitmap); err != nil {
-				return err
-			}
-			if dualWrite {
-				startTime := time.Now()
-				if err := loaderFunc(k, v, table, next); err != nil {
-					return err
-				}
-				costBitmapDB += time.Since(startTime)
-			}
-			return nil
-		}
-		if err := collectorTopics.Load(tx, kv.LogTopicIndex, bitmapDB2LoadTopic, etl.TransformArgs{Quit: quit}); err != nil {
+		loadTopic := pl.ETLLoadFunc(kv.LogTopicIndex)
+		loadAddress := pl.ETLLoadFunc(kv.LogAddressIndex)
+		if err := collectorTopics.Load(tx, kv.LogTopicIndex, loadTopic, etl.TransformArgs{Quit: quit}); err != nil {
 			return err
 		}
-		if err := collectorAddrs.Load(tx, kv.LogAddressIndex, bitmapDB2LoadAddress, etl.TransformArgs{Quit: quit}); err != nil {
+		if err := collectorAddrs.Load(tx, kv.LogAddressIndex, loadAddress, etl.TransformArgs{Quit: quit}); err != nil {
 			return err
 		}
 		if err := pl.Commit(); err != nil {
 			return err
 		}
-		log.Info("LogIndex commit", "bitmapDBCost", costBitmapDB, "bitmapDB2Summary", pl.Summary)
+		log.Info(fmt.Sprintf("[%s] LogIndex commit", logPrefix), "bitmapDB2Summary", pl.Summary)
 		return nil
 	} else {
 		if err := collectorTopics.Load(tx, kv.LogTopicIndex, loaderFunc, etl.TransformArgs{Quit: quit}); err != nil {
@@ -442,10 +410,10 @@ func unwindLogIndex(logPrefix string, db kv.RwTx, to uint64, cfg LogIndexCfg, qu
 		}
 	}
 
-	if err := truncateBitmaps(db, kv.LogTopicIndex, topics, to); err != nil {
+	if err := truncateBitmaps(db, kv.LogTopicIndex, topics, to, cfg.bitmapDB2); err != nil {
 		return err
 	}
-	if err := truncateBitmaps(db, kv.LogAddressIndex, addrs, to); err != nil {
+	if err := truncateBitmaps(db, kv.LogAddressIndex, addrs, to, cfg.bitmapDB2); err != nil {
 		return err
 	}
 	return nil
@@ -477,7 +445,7 @@ func flushBitmaps(c *etl.Collector, inMem map[string]*roaring.Bitmap) error {
 	return nil
 }
 
-func truncateBitmaps(tx kv.RwTx, bucket string, inMem map[string]struct{}, to uint64) error {
+func truncateBitmaps(tx kv.RwTx, bucket string, inMem map[string]struct{}, to uint64, bitmapDB2 *bitmapdb2.DB) error {
 	keys := make([]string, 0, len(inMem))
 	for k := range inMem {
 		keys = append(keys, k)
@@ -486,6 +454,19 @@ func truncateBitmaps(tx kv.RwTx, bucket string, inMem map[string]struct{}, to ui
 	for _, k := range keys {
 		if err := bitmapdb.TruncateRange(tx, bucket, []byte(k), uint32(to+1)); err != nil {
 			return fmt.Errorf("fail TruncateRange: bucket=%s, %w", bucket, err)
+		}
+	}
+
+	if bitmapDB2 != nil {
+		batch := bitmapDB2.NewBatch()
+		defer batch.Close()
+		for k := range inMem {
+			if err := batch.TruncateBitmap(bucket, []byte(k), to+1); err != nil {
+				return fmt.Errorf("fail TruncateRange (bitmapDB2): bucket=%s, %w", bucket, err)
+			}
+		}
+		if err := batch.Commit(); err != nil {
+			return fmt.Errorf("fail TruncateRange (bitmapDB2): bucket=%s, %w", bucket, err)
 		}
 	}
 

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/RoaringBitmap/roaring"
+	"github.com/RoaringBitmap/roaring/roaring64"
 	"github.com/cockroachdb/pebble"
 	"github.com/ledgerwatch/log/v3"
 )
@@ -167,7 +168,42 @@ func (b *Batch) UpsertBitmap(bucket string, key []byte, value *roaring.Bitmap) e
 	return b.upsertBitmapInternal(bucket, key, value)
 }
 
-func (b *Batch) upsertBitmapInternal(bucket string, key []byte, value *roaring.Bitmap) error {
+type roaringBitmap64Reader struct {
+	value *roaring64.Bitmap
+}
+
+func (r *roaringBitmap64Reader) IsEmpty() bool {
+	return r.value.IsEmpty()
+}
+
+func (r *roaringBitmap64Reader) Iterate(cb func(x uint32) bool) {
+	iter := r.value.Iterator()
+	for iter.HasNext() {
+		v := iter.Next()
+		if v > math.MaxUint32 {
+			panic("value too large")
+		}
+		if !cb(uint32(v)) {
+			break
+		}
+	}
+}
+
+func (b *Batch) UpsertBitmap64(bucket string, key []byte, value *roaring64.Bitmap) error {
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
+	if b.batch == nil {
+		return fmt.Errorf("batch is closed")
+	}
+	return b.upsertBitmapInternal(bucket, key, &roaringBitmap64Reader{value})
+}
+
+type RoaringBitmapReader interface {
+	IsEmpty() bool
+	Iterate(cb func(x uint32) bool)
+}
+
+func (b *Batch) upsertBitmapInternal(bucket string, key []byte, value RoaringBitmapReader) error {
 	if value.IsEmpty() {
 		return nil
 	}
@@ -194,7 +230,7 @@ func (b *Batch) commitInternal() error {
 	startTime := time.Now()
 	txSize := b.batch.Len()
 	defer func() {
-		log.Info("Batch commit done", "time", time.Since(startTime), "txSize", txSize)
+		log.Debug("Batch commit done", "time", time.Since(startTime), "txSize", txSize)
 	}()
 	return b.batch.Commit(nil)
 }
