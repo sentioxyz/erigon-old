@@ -113,6 +113,9 @@ func APIList(db kv.RoDB, borDb kv.RoDB, eth rpchelper.ApiBackend, txPool txpool.
 				Version:   "1.0",
 			})
 		case "ots":
+			if bitmapDB2 != nil {
+				panic("ots is not supported when bitmapdb2 is enabled")
+			}
 			list = append(list, rpc.API{
 				Namespace: "ots",
 				Public:    true,
