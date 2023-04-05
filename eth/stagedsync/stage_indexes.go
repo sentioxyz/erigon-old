@@ -465,7 +465,7 @@ func PruneAccountHistoryIndex(s *PruneState, tx kv.RwTx, cfg HistoryCfg, ctx con
 	}
 
 	pruneTo := cfg.prune.History.PruneTo(s.ForwardProgress)
-	if err = pruneHistoryIndex(tx, kv.AccountChangeSet, logPrefix, cfg.tmpdir, pruneTo, ctx); err != nil {
+	if err = pruneHistoryIndex(tx, kv.AccountChangeSet, logPrefix, cfg.tmpdir, pruneTo, ctx, cfg.bitmapDB2); err != nil {
 		return err
 	}
 	if err = s.Done(tx); err != nil {
@@ -495,7 +495,7 @@ func PruneStorageHistoryIndex(s *PruneState, tx kv.RwTx, cfg HistoryCfg, ctx con
 		defer tx.Rollback()
 	}
 	pruneTo := cfg.prune.History.PruneTo(s.ForwardProgress)
-	if err = pruneHistoryIndex(tx, kv.StorageChangeSet, logPrefix, cfg.tmpdir, pruneTo, ctx); err != nil {
+	if err = pruneHistoryIndex(tx, kv.StorageChangeSet, logPrefix, cfg.tmpdir, pruneTo, ctx, cfg.bitmapDB2); err != nil {
 		return err
 	}
 	if err = s.Done(tx); err != nil {
@@ -510,7 +510,7 @@ func PruneStorageHistoryIndex(s *PruneState, tx kv.RwTx, cfg HistoryCfg, ctx con
 	return nil
 }
 
-func pruneHistoryIndex(tx kv.RwTx, csTable, logPrefix, tmpDir string, pruneTo uint64, ctx context.Context) error {
+func pruneHistoryIndex(tx kv.RwTx, csTable, logPrefix, tmpDir string, pruneTo uint64, ctx context.Context, bitmapDB2 *bitmapdb2.DB) error {
 	logEvery := time.NewTicker(logInterval)
 	defer logEvery.Stop()
 
@@ -540,6 +540,13 @@ func pruneHistoryIndex(tx kv.RwTx, csTable, logPrefix, tmpDir string, pruneTo ui
 	if csTable == kv.StorageChangeSet {
 		prefixLen = length.Hash
 	}
+
+	var batch *bitmapdb2.Batch
+	if bitmapDB2 != nil {
+		batch := bitmapDB2.NewBatch()
+		defer batch.Close()
+	}
+
 	if err := collector.Load(tx, "", func(addr, _ []byte, table etl.CurrentTableReader, next etl.LoadNextFunc) error {
 		select {
 		case <-logEvery.C:
@@ -547,6 +554,11 @@ func pruneHistoryIndex(tx kv.RwTx, csTable, logPrefix, tmpDir string, pruneTo ui
 		case <-ctx.Done():
 			return libcommon.ErrStopped
 		default:
+		}
+		if batch != nil {
+			if err := batch.TruncateBitmap(historyv2.Mapper[csTable].IndexBucket, addr, pruneTo+1); err != nil {
+				return err
+			}
 		}
 		for k, _, err := c.Seek(addr); k != nil; k, _, err = c.Next() {
 			if err != nil {
@@ -563,6 +575,11 @@ func pruneHistoryIndex(tx kv.RwTx, csTable, logPrefix, tmpDir string, pruneTo ui
 		return nil
 	}, etl.TransformArgs{}); err != nil {
 		return err
+	}
+	if batch != nil {
+		if err := batch.Commit(); err != nil {
+			return fmt.Errorf("Commit (bitmapdb2): %w", err)
+		}
 	}
 
 	return nil

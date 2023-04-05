@@ -70,7 +70,7 @@ func (db *DB) NewAutoBatch(txSize int) *Batch {
 }
 
 func (db *DB) iterateContainers(reader LDBReader, bucket string, key []byte, from, to uint64,
-	fn func(key []byte, c *container) error) error {
+	fn func(key []byte, c *container) (bool, error)) error {
 	prefix := containerRowPrefix(bucket, key)
 	iter := reader.NewIter(nil)
 	defer iter.Close()
@@ -85,8 +85,13 @@ func (db *DB) iterateContainers(reader LDBReader, bucket string, key []byte, fro
 		if hi > toHi {
 			break
 		}
-		if err := fn(iter.Key(), ContainerNoCopy(uint16(hi), iter.Value())); err != nil {
+		var more bool
+		var err error
+		if more, err = fn(iter.Key(), ContainerNoCopy(uint16(hi), iter.Value())); err != nil {
 			return err
+		}
+		if !more {
+			break
 		}
 	}
 	return nil
@@ -94,18 +99,50 @@ func (db *DB) iterateContainers(reader LDBReader, bucket string, key []byte, fro
 
 func (db *DB) GetBitmap(bucket string, key []byte, from, to uint64) (*roaring.Bitmap, error) {
 	bitmap := roaring.New()
-	if err := db.iterateContainers(db.ldb, bucket, key, from, to, func(_ []byte, c *container) error {
+	if err := db.iterateContainers(db.ldb, bucket, key, from, to, func(_ []byte, c *container) (bool, error) {
 		c.ForEach(func(v uint32) error {
 			if v >= uint32(from) && v <= uint32(to) {
 				bitmap.Add(v)
 			}
 			return nil
 		})
-		return nil
+		return true, nil
 	}); err != nil {
 		return nil, err
 	}
 	return bitmap, nil
+}
+
+func (db *DB) GetBitmap64(bucket string, key []byte, from, to uint64) (*roaring64.Bitmap, error) {
+	bitmap := roaring64.New()
+	if err := db.iterateContainers(db.ldb, bucket, key, from, to, func(_ []byte, c *container) (bool, error) {
+		c.ForEach(func(v uint32) error {
+			if v >= uint32(from) && v <= uint32(to) {
+				bitmap.Add(uint64(v))
+			}
+			return nil
+		})
+		return true, nil
+	}); err != nil {
+		return nil, err
+	}
+	return bitmap, nil
+}
+
+func (db *DB) SeekFirstGTE(bucket string, key []byte, input uint32) (uint32, error) {
+	found, value := false, uint32(0)
+	if err := db.iterateContainers(db.ldb, bucket, key, uint64(input), math.MaxInt32, func(_ []byte, c *container) (bool, error) {
+		c.ForEach(func(v uint32) error {
+			if !found && v >= input {
+				found, value = true, v
+			}
+			return nil
+		})
+		return !found, nil
+	}); err != nil {
+		return 0, err
+	}
+	return value, nil
 }
 
 func (b *Batch) Close() error {
@@ -137,7 +174,7 @@ func (b *Batch) TruncateBitmap(bucket string, key []byte, from uint64) error {
 	if b.batch == nil {
 		return fmt.Errorf("batch is closed")
 	}
-	b.db.iterateContainers(b.batch, bucket, key, from, math.MaxUint64, func(key []byte, c *container) error {
+	b.db.iterateContainers(b.batch, bucket, key, from, math.MaxUint64, func(key []byte, c *container) (bool, error) {
 		min := uint64(c.Hi) << 16
 		if min < from {
 			// This container is partially truncated
@@ -149,11 +186,11 @@ func (b *Batch) TruncateBitmap(bucket string, key []byte, from uint64) error {
 				return nil
 			})
 			if len(preserved) > 0 {
-				return b.batch.Set(key, ContainerFromArray(preserved).Buffer, nil)
+				return true, b.batch.Set(key, ContainerFromArray(preserved).Buffer, nil)
 			}
 		}
 		// This container is fully truncated
-		return b.batch.Delete(key, nil)
+		return true, b.batch.Delete(key, nil)
 	})
 	return b.autoCommit()
 }

@@ -169,12 +169,12 @@ func TestIndexGenerator_Truncate(t *testing.T) {
 			checkIndex(t, tx, indexBucket, hashes[2], expected[string(hashes[2])])
 
 			//})
-			err = pruneHistoryIndex(tx, csbucket, "", tmpDir, 128, ctx)
+			err = pruneHistoryIndex(tx, csbucket, "", tmpDir, 128, ctx, nil)
 			assert.NoError(t, err)
 			expectNoHistoryBefore(t, tx, csbucket, 128)
 
 			// double prune is safe
-			err = pruneHistoryIndex(tx, csbucket, "", tmpDir, 128, ctx)
+			err = pruneHistoryIndex(tx, csbucket, "", tmpDir, 128, ctx, nil)
 			assert.NoError(t, err)
 			expectNoHistoryBefore(t, tx, csbucket, 128)
 			tx.Rollback()

@@ -473,7 +473,7 @@ func truncateBitmaps(tx kv.RwTx, bucket string, inMem map[string]struct{}, to ui
 	return nil
 }
 
-func pruneOldLogChunks(tx kv.RwTx, bucket string, inMem *etl.Collector, pruneTo uint64, ctx context.Context) error {
+func pruneOldLogChunks(tx kv.RwTx, bucket string, inMem *etl.Collector, pruneTo uint64, ctx context.Context, batch *bitmapdb2.Batch) error {
 	logEvery := time.NewTicker(logInterval)
 	defer logEvery.Stop()
 
@@ -484,6 +484,11 @@ func pruneOldLogChunks(tx kv.RwTx, bucket string, inMem *etl.Collector, pruneTo 
 	defer c.Close()
 
 	if err := inMem.Load(tx, bucket, func(key, v []byte, table etl.CurrentTableReader, next etl.LoadNextFunc) error {
+		if batch != nil {
+			if err := batch.TruncateBitmap(bucket, key, pruneTo+1); err != nil {
+				return err
+			}
+		}
 		for k, _, err := c.Seek(key); k != nil; k, _, err = c.Next() {
 			if err != nil {
 				return err
@@ -522,7 +527,7 @@ func PruneLogIndex(s *PruneState, tx kv.RwTx, cfg LogIndexCfg, ctx context.Conte
 	}
 
 	pruneTo := cfg.prune.Receipts.PruneTo(s.ForwardProgress)
-	if err = pruneLogIndex(logPrefix, tx, cfg.tmpdir, pruneTo, ctx); err != nil {
+	if err = pruneLogIndex(logPrefix, tx, cfg.tmpdir, pruneTo, ctx, cfg.bitmapDB2); err != nil {
 		return err
 	}
 	if err = s.Done(tx); err != nil {
@@ -537,7 +542,7 @@ func PruneLogIndex(s *PruneState, tx kv.RwTx, cfg LogIndexCfg, ctx context.Conte
 	return nil
 }
 
-func pruneLogIndex(logPrefix string, tx kv.RwTx, tmpDir string, pruneTo uint64, ctx context.Context) error {
+func pruneLogIndex(logPrefix string, tx kv.RwTx, tmpDir string, pruneTo uint64, ctx context.Context, bitmapDB2 *bitmapdb2.DB) error {
 	logEvery := time.NewTicker(logInterval)
 	defer logEvery.Stop()
 
@@ -590,11 +595,22 @@ func pruneLogIndex(logPrefix string, tx kv.RwTx, tmpDir string, pruneTo uint64, 
 		}
 	}
 
-	if err := pruneOldLogChunks(tx, kv.LogTopicIndex, topics, pruneTo, ctx); err != nil {
+	var batch *bitmapdb2.Batch
+	if bitmapDB2 != nil {
+		batch := bitmapDB2.NewBatch()
+		defer batch.Close()
+	}
+
+	if err := pruneOldLogChunks(tx, kv.LogTopicIndex, topics, pruneTo, ctx, batch); err != nil {
 		return err
 	}
-	if err := pruneOldLogChunks(tx, kv.LogAddressIndex, addrs, pruneTo, ctx); err != nil {
+	if err := pruneOldLogChunks(tx, kv.LogAddressIndex, addrs, pruneTo, ctx, batch); err != nil {
 		return err
+	}
+	if batch != nil {
+		if err := batch.Commit(); err != nil {
+			return fmt.Errorf("Commit (bitmapdb2): %w", err)
+		}
 	}
 	return nil
 }

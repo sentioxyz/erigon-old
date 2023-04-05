@@ -8,6 +8,7 @@ import (
 
 	"github.com/RoaringBitmap/roaring"
 	"github.com/RoaringBitmap/roaring/roaring64"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestUpsertBitmap(t *testing.T) {
@@ -151,5 +152,45 @@ func TestParallelLoad64(t *testing.T) {
 				t.Fatalf("bitmap not match, expected: %v, actual: %v", b1, b2)
 			}
 		}
+	}
+}
+
+func TestSeekFirstGTE(t *testing.T) {
+	datadir, err := os.MkdirTemp("", "bitmapdb2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(datadir)
+	db := NewBitmapDB2(datadir)
+	defer db.Close()
+
+	batch := db.NewBatch()
+	defer batch.Close()
+	bitmap := roaring.NewBitmap()
+	bitmap.Add(1)
+	bitmap.Add(3)
+	bitmap.Add(5)
+	bitmap.Add(33335)
+	bitmap.Add(1000000)
+	batch.UpsertBitmap("test", []byte{0}, bitmap)
+	if err := batch.Commit(); err != nil {
+		t.Fatal(err)
+	}
+
+	testCases := []uint32{
+		0, 1,
+		1, 1,
+		2, 3,
+		5, 5,
+		6, 33335,
+		33335, 33335,
+		33336, 1000000,
+		1000000, 1000000,
+		1000001, 0,
+	}
+	for i := 0; i < len(testCases); i += 2 {
+		v, err := db.SeekFirstGTE("test", []byte{0}, testCases[i])
+		assert.NoError(t, err)
+		assert.Equal(t, testCases[i+1], v)
 	}
 }

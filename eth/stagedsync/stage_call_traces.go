@@ -500,7 +500,7 @@ func PruneCallTraces(s *PruneState, tx kv.RwTx, cfg CallTracesCfg, ctx context.C
 	}
 
 	if cfg.prune.CallTraces.Enabled() {
-		if err = pruneCallTraces(tx, logPrefix, cfg.prune.CallTraces.PruneTo(s.ForwardProgress), ctx, cfg.tmpdir); err != nil {
+		if err = pruneCallTraces(tx, logPrefix, cfg.prune.CallTraces.PruneTo(s.ForwardProgress), ctx, cfg.tmpdir, cfg.bitmapDB2); err != nil {
 			return err
 		}
 	}
@@ -516,7 +516,7 @@ func PruneCallTraces(s *PruneState, tx kv.RwTx, cfg CallTracesCfg, ctx context.C
 	return nil
 }
 
-func pruneCallTraces(tx kv.RwTx, logPrefix string, pruneTo uint64, ctx context.Context, tmpdir string) error {
+func pruneCallTraces(tx kv.RwTx, logPrefix string, pruneTo uint64, ctx context.Context, tmpdir string, bitmapDB2 *bitmapdb2.DB) error {
 	logEvery := time.NewTicker(logInterval)
 	defer logEvery.Stop()
 
@@ -567,6 +567,12 @@ func pruneCallTraces(tx kv.RwTx, logPrefix string, pruneTo uint64, ctx context.C
 		}
 	}
 
+	var batch *bitmapdb2.Batch
+	if bitmapDB2 != nil {
+		batch := bitmapDB2.NewBatch()
+		defer batch.Close()
+	}
+
 	{
 		c, err := tx.RwCursor(kv.CallFromIndex)
 		if err != nil {
@@ -575,6 +581,11 @@ func pruneCallTraces(tx kv.RwTx, logPrefix string, pruneTo uint64, ctx context.C
 		defer c.Close()
 
 		if err := froms.Load(tx, "", func(from, _ []byte, _ etl.CurrentTableReader, _ etl.LoadNextFunc) error {
+			if batch != nil {
+				if err := batch.TruncateBitmap(kv.CallFromIndex, from, pruneTo+1); err != nil {
+					return err
+				}
+			}
 			for k, _, err := c.Seek(from); k != nil; k, _, err = c.Next() {
 				if err != nil {
 					return err
@@ -607,6 +618,11 @@ func pruneCallTraces(tx kv.RwTx, logPrefix string, pruneTo uint64, ctx context.C
 		defer c.Close()
 
 		if err := tos.Load(tx, "", func(to, _ []byte, _ etl.CurrentTableReader, _ etl.LoadNextFunc) error {
+			if batch != nil {
+				if err := batch.TruncateBitmap(kv.CallToIndex, to, pruneTo+1); err != nil {
+					return err
+				}
+			}
 			for k, _, err := c.Seek(to); k != nil; k, _, err = c.Next() {
 				if err != nil {
 					return err
@@ -629,6 +645,11 @@ func pruneCallTraces(tx kv.RwTx, logPrefix string, pruneTo uint64, ctx context.C
 			return nil
 		}, etl.TransformArgs{}); err != nil {
 			return err
+		}
+	}
+	if batch != nil {
+		if err := batch.Commit(); err != nil {
+			return fmt.Errorf("Commit (bitmapdb2): %w", err)
 		}
 	}
 	return nil
