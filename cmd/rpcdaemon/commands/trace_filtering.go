@@ -268,7 +268,7 @@ func traceFilterBitmaps(tx kv.Tx, req TraceFilterRequest, from, to uint64, bitma
 	for _, addr := range req.ToAddress {
 		if addr != nil {
 			if bitmapDB2 != nil {
-				m, err := bitmapDB2.GetBitmap64(kv.CallFromIndex, addr.Bytes(), from, to)
+				m, err := bitmapDB2.GetBitmap64(kv.CallToIndex, addr.Bytes(), from, to)
 				if err != nil {
 					return nil, nil, nil, err
 				}

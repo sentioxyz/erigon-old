@@ -476,7 +476,7 @@ func DoUnwindCallTraces(logPrefix string, db kv.RwTx, from, to uint64, ctx conte
 		}
 		return bitmapdb.TruncateRange64(db, kv.CallToIndex, k, to+1)
 	}, etl.TransformArgs{}); err != nil {
-		return fmt.Errorf("TruncateRange: bucket=%s, %w", kv.CallFromIndex, err)
+		return fmt.Errorf("TruncateRange: bucket=%s, %w", kv.CallToIndex, err)
 	}
 
 	if batch != nil {
