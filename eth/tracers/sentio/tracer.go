@@ -42,10 +42,10 @@ type Trace struct {
 	From    libcommon.Address `json:"from,omitempty"`
 
 	// Used by call
-	To          libcommon.Address `json:"to,omitempty"`
-	Input       hexutil.Bytes     `json:"input,omitempty"`
-	Value       hexutil.Bytes     `json:"value,omitempty"`
-	ErrorString string            `json:"error,omitempty"`
+	To          *libcommon.Address `json:"to,omitempty"`
+	Input       hexutil.Bytes      `json:"input,omitempty"`
+	Value       hexutil.Bytes      `json:"value,omitempty"`
+	ErrorString string             `json:"error,omitempty"`
 
 	// Used by jump
 	Stack  []uint256.Int `json:"stack,omitempty"`
@@ -78,7 +78,7 @@ func (t *sentioTracer) CaptureEnter(typ vm.OpCode, from libcommon.Address, to li
 		Index: 0,
 		Type:  typ.String(),
 		From:  from,
-		To:    to,
+		To:    &to,
 		Gas:   gas,
 		Input: input,
 	}
@@ -140,9 +140,10 @@ func (t *sentioTracer) CaptureState(pc uint64, op vm.OpCode, gas, cost uint64, s
 		return
 	case vm.SELFDESTRUCT:
 		from := scope.Contract.Address()
+		to := libcommon.BytesToAddress(scope.Stack.Peek().Bytes())
 		call := mergeBase(Trace{
 			From:  from,
-			To:    libcommon.BytesToAddress(scope.Stack.Peek().Bytes()),
+			To:    &to,
 			Value: t.env.IntraBlockState().GetBalance(from).Bytes(),
 		})
 		t.traces = append(t.traces, call)
@@ -166,7 +167,7 @@ func (t *sentioTracer) CaptureState(pc uint64, op vm.OpCode, gas, cost uint64, s
 		inputSize := scope.Stack.Back(offset + 3)
 		call := mergeBase(Trace{
 			From:  scope.Contract.Address(),
-			To:    to,
+			To:    &to,
 			Input: scope.Memory.GetPtr(int64(inputOffset.Uint64()), int64(inputSize.Uint64())),
 		})
 		if op == vm.CALL || op == vm.CALLCODE {
