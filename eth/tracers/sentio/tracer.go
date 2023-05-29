@@ -119,10 +119,10 @@ func (t *sentioTracer) CaptureState(pc uint64, op vm.OpCode, gas, cost uint64, s
 
 	switch op {
 	case vm.RETURN:
-		//outputOffset := scope.Stack.Peek()
-		//outputSize := scope.Stack.Back(1)
+		outputOffset := scope.Stack.Peek()
+		outputSize := scope.Stack.Back(1)
 		trace := mergeBase(Trace{
-			//Value: copyMemory(outputOffset, outputSize),
+			Value: copyMemory(outputOffset, outputSize),
 		})
 		t.traces = append(t.traces, trace)
 		return
@@ -130,13 +130,13 @@ func (t *sentioTracer) CaptureState(pc uint64, op vm.OpCode, gas, cost uint64, s
 		fallthrough
 	case vm.CREATE2:
 		// If a new contract is being created, add to the call stack
-		//inputOffset := scope.Stack.Back(1)
-		//inputSize := scope.Stack.Back(2)
+		inputOffset := scope.Stack.Back(1)
+		inputSize := scope.Stack.Back(2)
 		// TODO calculate to
 		from := scope.Contract.Address()
 		trace := mergeBase(Trace{
-			From: &from,
-			//Input: copyMemory(inputOffset, inputSize),
+			From:  &from,
+			Input: copyMemory(inputOffset, inputSize),
 			Value: scope.Stack.Peek().Bytes(),
 		})
 		t.traces = append(t.traces, trace)
@@ -167,17 +167,17 @@ func (t *sentioTracer) CaptureState(pc uint64, op vm.OpCode, gas, cost uint64, s
 			//log.Warn("precompiled", "index: ", t.index)
 			return
 		}
-		//offset := 1
-		//if op == vm.DELEGATECALL || op == vm.STATICCALL {
-		//	offset = 0
-		//}
-		//inputOffset := scope.Stack.Back(offset + 2)
-		//inputSize := scope.Stack.Back(offset + 3)
+		offset := 1
+		if op == vm.DELEGATECALL || op == vm.STATICCALL {
+			offset = 0
+		}
+		inputOffset := scope.Stack.Back(offset + 2)
+		inputSize := scope.Stack.Back(offset + 3)
 		from := scope.Contract.Address()
 		trace := mergeBase(Trace{
-			From: &from,
-			To:   &to,
-			//Input: copyMemory(inputOffset, inputSize),
+			From:  &from,
+			To:    &to,
+			Input: copyMemory(inputOffset, inputSize),
 		})
 		if op == vm.CALL || op == vm.CALLCODE {
 			trace.Value = scope.Stack.Back(2).Bytes()
@@ -193,15 +193,15 @@ func (t *sentioTracer) CaptureState(pc uint64, op vm.OpCode, gas, cost uint64, s
 	case vm.JUMPDEST:
 		from := scope.Contract.Address()
 
-		var stack []uint256.Int
-		for i := 0; i < scope.Stack.Len(); i++ {
-			stack = append(stack, scope.Stack.Data[i])
-		}
+		//var stack []uint256.Int
+		//for i := 0; i < scope.Stack.Len(); i++ {
+		//	stack = append(stack, scope.Stack.Data[i])
+		//}
 
 		jump := mergeBase(Trace{
-			From:  &from,
-			Stack: stack,
-			//Stack: append([]uint256.Int(nil), scope.Stack.Data...),
+			From: &from,
+			//Stack: stack,
+			Stack: append([]uint256.Int(nil), scope.Stack.Data...),
 
 			//Memory: scope.Memory.GetCopy(0, int64(scope.Memory.Len())),
 		})
