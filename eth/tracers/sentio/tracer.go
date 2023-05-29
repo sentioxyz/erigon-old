@@ -203,7 +203,7 @@ func (t *sentioTracer) CaptureState(pc uint64, op vm.OpCode, gas, cost uint64, s
 			Stack: stack,
 			//Stack: append([]uint256.Int(nil), scope.Stack.Data...),
 
-			Memory: scope.Memory.GetCopy(0, int64(scope.Memory.Len())),
+			//Memory: scope.Memory.GetCopy(0, int64(scope.Memory.Len())),
 		})
 		t.traces = append(t.traces, jump)
 		return
