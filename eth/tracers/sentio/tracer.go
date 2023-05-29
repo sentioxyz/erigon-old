@@ -45,7 +45,7 @@ type Trace struct {
 
 	// Used by call
 	To          *libcommon.Address `json:"to,omitempty"`
-	Input       hexutil.Bytes      `json:"input,omitempty"`
+	Input       hexutil.Bytes      `json:"input"` // TODO check if this could be omit
 	Value       hexutil.Bytes      `json:"value,omitempty"`
 	ErrorString string             `json:"error,omitempty"`
 
