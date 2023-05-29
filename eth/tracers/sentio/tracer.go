@@ -10,7 +10,6 @@ import (
 	"github.com/ledgerwatch/erigon/common/math"
 	"github.com/ledgerwatch/erigon/core/vm"
 	"github.com/ledgerwatch/erigon/eth/tracers"
-	"github.com/ledgerwatch/log/v3"
 )
 
 func init() {
@@ -32,7 +31,7 @@ type sentioTracer struct {
 }
 
 type Trace struct {
-	op      vm.OpCode
+	//op      vm.OpCode
 	Type    string              `json:"type"`
 	Pc      uint64              `json:"pc"`
 	Index   int                 `json:"index"`
@@ -46,7 +45,7 @@ type Trace struct {
 	// Used by call
 	To          *libcommon.Address `json:"to,omitempty"`
 	Input       hexutil.Bytes      `json:"input"` // TODO check if this could be omit
-	Value       hexutil.Bytes      `json:"value,omitempty"`
+	Value       hexutil.Bytes      `json:"value"`
 	ErrorString string             `json:"error,omitempty"`
 
 	// Used by jump
@@ -104,7 +103,7 @@ func (t *sentioTracer) CaptureState(pc uint64, op vm.OpCode, gas, cost uint64, s
 
 	t.index++
 	var mergeBase = func(trace Trace) Trace {
-		trace.op = op
+		//trace.op = op
 		trace.Pc = pc
 		trace.Type = op.String()
 		trace.Index = t.index - 1
@@ -165,7 +164,7 @@ func (t *sentioTracer) CaptureState(pc uint64, op vm.OpCode, gas, cost uint64, s
 		// If a new method invocation is being done, add to the call stack
 		to := libcommon.BytesToAddress(scope.Stack.Back(1).Bytes())
 		if t.isPrecompiled(to) {
-			log.Warn("precompiled", "index: ", t.index)
+			//log.Warn("precompiled", "index: ", t.index)
 			return
 		}
 		offset := 1
@@ -348,8 +347,6 @@ func (t *sentioTracer) Stop(err error) {
 //}
 
 func newSentioTracer(name string, ctx *tracers.Context, cfg json.RawMessage) (tracers.Tracer, error) {
-	log.Warn("checking tracer name: ", name)
-
 	if name != "sentio" {
 		return nil, errors.New("no tracer found")
 	}
