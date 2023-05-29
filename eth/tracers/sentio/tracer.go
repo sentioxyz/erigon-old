@@ -31,15 +31,15 @@ type sentioTracer struct {
 
 type Trace struct {
 	op      vm.OpCode
-	Type    string            `json:"type"` //  this will be differ than js version
-	Pc      uint64            `json:"pc"`
-	Index   int               `json:"index"`
-	GasIn   uint64            `json:"gasIn"`
-	Gas     uint64            `json:"gas"`
-	GasCost uint64            `json:"gasCost"`
-	GasUsed uint64            `json:"gasUsed"`
-	Output  hexutil.Bytes     `json:"output,omitempty"`
-	From    libcommon.Address `json:"from,omitempty"`
+	Type    string             `json:"type"` //  this will be differ than js version
+	Pc      uint64             `json:"pc"`
+	Index   int                `json:"index"`
+	GasIn   uint64             `json:"gasIn"`
+	Gas     uint64             `json:"gas"`
+	GasCost uint64             `json:"gasCost"`
+	GasUsed uint64             `json:"gasUsed"`
+	Output  hexutil.Bytes      `json:"output,omitempty"`
+	From    *libcommon.Address `json:"from,omitempty"`
 
 	// Used by call
 	To          *libcommon.Address `json:"to,omitempty"`
@@ -52,9 +52,9 @@ type Trace struct {
 	Memory []byte        `json:"memory,omitempty"`
 
 	// Used by log
-	Address libcommon.Address `json:"address,omitempty"`
-	Data    hexutil.Bytes     `json:"data,omitempty"`
-	Topics  []hexutil.Bytes   `json:"topics,omitempty"`
+	Address *libcommon.Address `json:"address,omitempty"`
+	Data    hexutil.Bytes      `json:"data,omitempty"`
+	Topics  []hexutil.Bytes    `json:"topics,omitempty"`
 
 	// Only used by root
 	Traces []Trace `json:"traces,omitempty"`
@@ -77,7 +77,7 @@ func (t *sentioTracer) CaptureEnter(typ vm.OpCode, from libcommon.Address, to li
 	t.rootTrace = Trace{
 		Index: 0,
 		Type:  typ.String(),
-		From:  from,
+		From:  &from,
 		To:    &to,
 		Gas:   gas,
 		Input: input,
@@ -130,8 +130,9 @@ func (t *sentioTracer) CaptureState(pc uint64, op vm.OpCode, gas, cost uint64, s
 		inputOffset := scope.Stack.Back(1)
 		inputSize := scope.Stack.Back(2)
 		// TODO calculate to
+		from := scope.Contract.Address()
 		call := mergeBase(Trace{
-			From:  scope.Contract.Address(),
+			From:  &from,
 			Input: scope.Memory.GetPtr(int64(inputOffset.Uint64()), int64(inputSize.Uint64())),
 			Value: scope.Stack.Peek().Bytes(),
 		})
@@ -142,7 +143,7 @@ func (t *sentioTracer) CaptureState(pc uint64, op vm.OpCode, gas, cost uint64, s
 		from := scope.Contract.Address()
 		to := libcommon.BytesToAddress(scope.Stack.Peek().Bytes())
 		call := mergeBase(Trace{
-			From:  from,
+			From:  &from,
 			To:    &to,
 			Value: t.env.IntraBlockState().GetBalance(from).Bytes(),
 		})
@@ -165,8 +166,9 @@ func (t *sentioTracer) CaptureState(pc uint64, op vm.OpCode, gas, cost uint64, s
 		}
 		inputOffset := scope.Stack.Back(offset + 2)
 		inputSize := scope.Stack.Back(offset + 3)
+		from := scope.Contract.Address()
 		call := mergeBase(Trace{
-			From:  scope.Contract.Address(),
+			From:  &from,
 			To:    &to,
 			Input: scope.Memory.GetPtr(int64(inputOffset.Uint64()), int64(inputSize.Uint64())),
 		})
@@ -205,8 +207,9 @@ func (t *sentioTracer) CaptureState(pc uint64, op vm.OpCode, gas, cost uint64, s
 		for i := 0; i < int(topicCount); i++ {
 			topics = append(topics, scope.Stack.Back(2+i).Bytes())
 		}
+		addr := scope.Contract.Address()
 		l := mergeBase(Trace{
-			Address: scope.Contract.Address(),
+			Address: &addr,
 			Data:    data,
 			Topics:  topics,
 		})
