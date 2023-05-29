@@ -194,15 +194,15 @@ func (t *sentioTracer) CaptureState(pc uint64, op vm.OpCode, gas, cost uint64, s
 	case vm.JUMPDEST:
 		from := scope.Contract.Address()
 
-		//var stack [][4]uint64
-		//for i := 0; i < scope.Stack.Len(); i++ {
-		//	stack = append(stack, [4]uint64(*scope.Stack.Back(i)))
-		//}
+		var stack []uint256.Int
+		for i := 0; i < scope.Stack.Len(); i++ {
+			stack = append(stack, scope.Stack.Data[i])
+		}
 
 		jump := mergeBase(Trace{
-			From: &from,
-			//Stack: stack,
-			Stack: append([]uint256.Int(nil), scope.Stack.Data...),
+			From:  &from,
+			Stack: stack,
+			//Stack: append([]uint256.Int(nil), scope.Stack.Data...),
 
 			//Memory: scope.Memory.Data(),
 		})
