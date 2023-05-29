@@ -50,8 +50,9 @@ type Trace struct {
 	ErrorString string             `json:"error,omitempty"`
 
 	// Used by jump
-	Stack  []uint256.Int `json:"stack,omitempty"`
-	Memory []byte        `json:"memory,omitempty"`
+	//Stack  []uint256.Int `json:"stack,omitempty"`
+	Stack  [][4]uint64 `json:"stack,omitempty"`
+	Memory []byte      `json:"memory,omitempty"`
 
 	// Used by log
 	Address *libcommon.Address `json:"address,omitempty"`
@@ -192,9 +193,17 @@ func (t *sentioTracer) CaptureState(pc uint64, op vm.OpCode, gas, cost uint64, s
 	//	fallthrough
 	case vm.JUMPDEST:
 		from := scope.Contract.Address()
+
+		var stack [][4]uint64
+		for i := 0; i < scope.Stack.Len(); i++ {
+			stack = append(stack, [4]uint64(*scope.Stack.Back(i)))
+		}
+
 		jump := mergeBase(Trace{
 			From:  &from,
-			Stack: append([]uint256.Int(nil), scope.Stack.Data...),
+			Stack: stack,
+			//Stack: append([]uint256.Int(nil), scope.Stack.Data...),
+
 			//Memory: scope.Memory.Data(),
 		})
 		t.traces = append(t.traces, jump)
