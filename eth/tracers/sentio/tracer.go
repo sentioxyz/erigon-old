@@ -347,7 +347,7 @@ func (t *sentioTracer) Stop(err error) {
 //}
 
 func newSentioTracer(name string, ctx *tracers.Context, cfg json.RawMessage) (tracers.Tracer, error) {
-	if name != "sentio" {
+	if name != "sentioTracer" {
 		return nil, errors.New("no tracer found")
 	}
 
