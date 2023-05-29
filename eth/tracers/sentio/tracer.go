@@ -7,6 +7,7 @@ import (
 	"github.com/holiman/uint256"
 	libcommon "github.com/ledgerwatch/erigon-lib/common"
 	"github.com/ledgerwatch/erigon/common/hexutil"
+	"github.com/ledgerwatch/erigon/common/math"
 	"github.com/ledgerwatch/erigon/core/vm"
 	"github.com/ledgerwatch/erigon/eth/tracers"
 	"github.com/ledgerwatch/log/v3"
@@ -25,21 +26,22 @@ type sentioTracer struct {
 	descended    bool
 	index        int
 	currentDepth int
-	currentGas   uint64
+	currentGas   math.HexOrDecimal64
+	callsNumber  int
 	rootTrace    Trace
 }
 
 type Trace struct {
 	op      vm.OpCode
-	Type    string             `json:"type"` //  this will be differ than js version
-	Pc      uint64             `json:"pc"`
-	Index   int                `json:"index"`
-	GasIn   uint64             `json:"gasIn"`
-	Gas     uint64             `json:"gas"`
-	GasCost uint64             `json:"gasCost"`
-	GasUsed uint64             `json:"gasUsed"`
-	Output  hexutil.Bytes      `json:"output,omitempty"`
-	From    *libcommon.Address `json:"from,omitempty"`
+	Type    string              `json:"type"`
+	Pc      uint64              `json:"pc"`
+	Index   int                 `json:"index"`
+	GasIn   math.HexOrDecimal64 `json:"gasIn"` // TODO this should be hex
+	Gas     math.HexOrDecimal64 `json:"gas"`
+	GasCost math.HexOrDecimal64 `json:"gasCost"`
+	GasUsed math.HexOrDecimal64 `json:"gasUsed"`
+	Output  hexutil.Bytes       `json:"output,omitempty"`
+	From    *libcommon.Address  `json:"from,omitempty"`
 
 	// Used by call
 	To          *libcommon.Address `json:"to,omitempty"`
@@ -67,20 +69,24 @@ func (t *sentioTracer) CaptureStart(env vm.VMInterface, from libcommon.Address, 
 	// Update list of precompiles based on current block
 	rules := env.ChainConfig().Rules(env.Context().BlockNumber, env.Context().Time)
 	t.activePrecompiles = vm.ActivePrecompiles(rules)
+
+	t.rootTrace = Trace{
+		Index: 0,
+		//Type:  typ.String(),
+		From:  &from,
+		To:    &to,
+		Gas:   math.HexOrDecimal64(gas),
+		Input: input,
+	}
 }
 func (t *sentioTracer) CaptureEnd(output []byte, usedGas uint64, err error) {
-	t.rootTrace.GasUsed = usedGas
+	t.rootTrace.GasUsed = math.HexOrDecimal64(usedGas)
 	t.rootTrace.Output = output
 	t.rootTrace.Traces = t.traces
 }
 func (t *sentioTracer) CaptureEnter(typ vm.OpCode, from libcommon.Address, to libcommon.Address, precompile bool, create bool, input []byte, gas uint64, value *uint256.Int, code []byte) {
-	t.rootTrace = Trace{
-		Index: 0,
-		Type:  typ.String(),
-		From:  &from,
-		To:    &to,
-		Gas:   gas,
-		Input: input,
+	if t.rootTrace.Type == "" {
+		t.rootTrace.Type = typ.String()
 	}
 }
 func (t *sentioTracer) CaptureExit(output []byte, usedGas uint64, err error) {}
@@ -95,59 +101,58 @@ func (t *sentioTracer) CaptureState(pc uint64, op vm.OpCode, gas, cost uint64, s
 		return
 	}
 
-	traceBase := Trace{
-		Pc:      pc,
-		Type:    op.String(),
-		Index:   t.index,
-		GasIn:   gas,
-		GasCost: cost,
-	}
 	t.index++
-	//topIdx := len(t.traces) - 1
 	var mergeBase = func(trace Trace) Trace {
-		trace.op = traceBase.op
-		trace.Pc = traceBase.Pc
-		trace.Type = traceBase.Type
-		trace.Index = traceBase.Index
-		trace.GasIn = traceBase.GasIn
-		trace.GasCost = traceBase.GasCost
+		trace.op = op
+		trace.Pc = pc
+		trace.Type = op.String()
+		trace.Index = t.index - 1
+		trace.GasIn = math.HexOrDecimal64(gas)
+		trace.GasCost = math.HexOrDecimal64(cost)
 		return trace
+	}
+
+	var copyMemory = func(offset *uint256.Int, size *uint256.Int) []byte {
+		// TODO check if we should use getPtr or getCopy
+		return scope.Memory.GetCopy(int64(offset.Uint64()), int64(size.Uint64()))
 	}
 
 	switch op {
 	case vm.RETURN:
 		outputOffset := scope.Stack.Peek()
 		outputSize := scope.Stack.Back(1)
-		// TODO check if we should use getPtr or getCopy
 		trace := mergeBase(Trace{
-			Value: scope.Memory.GetPtr(int64(outputOffset.Uint64()), int64(outputSize.Uint64())),
+			Value: copyMemory(outputOffset, outputSize),
 		})
 		t.traces = append(t.traces, trace)
 		return
 	case vm.CREATE:
 		fallthrough
 	case vm.CREATE2:
+		// If a new contract is being created, add to the call stack
 		inputOffset := scope.Stack.Back(1)
 		inputSize := scope.Stack.Back(2)
 		// TODO calculate to
 		from := scope.Contract.Address()
-		call := mergeBase(Trace{
+		trace := mergeBase(Trace{
 			From:  &from,
-			Input: scope.Memory.GetPtr(int64(inputOffset.Uint64()), int64(inputSize.Uint64())),
+			Input: copyMemory(inputOffset, inputSize),
 			Value: scope.Stack.Peek().Bytes(),
 		})
-		t.traces = append(t.traces, call)
+		t.traces = append(t.traces, trace)
+		t.callsNumber++
 		t.descended = true
 		return
 	case vm.SELFDESTRUCT:
+		// If a contract is being self destructed, gather that as a subcall too
 		from := scope.Contract.Address()
 		to := libcommon.BytesToAddress(scope.Stack.Peek().Bytes())
-		call := mergeBase(Trace{
+		trace := mergeBase(Trace{
 			From:  &from,
 			To:    &to,
 			Value: t.env.IntraBlockState().GetBalance(from).Bytes(),
 		})
-		t.traces = append(t.traces, call)
+		t.traces = append(t.traces, trace)
 		return
 	case vm.CALL:
 		fallthrough
@@ -156,8 +161,10 @@ func (t *sentioTracer) CaptureState(pc uint64, op vm.OpCode, gas, cost uint64, s
 	case vm.DELEGATECALL:
 		fallthrough
 	case vm.STATICCALL:
+		// If a new method invocation is being done, add to the call stack
 		to := libcommon.BytesToAddress(scope.Stack.Back(1).Bytes())
 		if t.isPrecompiled(to) {
+			log.Warn("precompiled", "index: ", t.index)
 			return
 		}
 		offset := 1
@@ -167,23 +174,26 @@ func (t *sentioTracer) CaptureState(pc uint64, op vm.OpCode, gas, cost uint64, s
 		inputOffset := scope.Stack.Back(offset + 2)
 		inputSize := scope.Stack.Back(offset + 3)
 		from := scope.Contract.Address()
-		call := mergeBase(Trace{
+		trace := mergeBase(Trace{
 			From:  &from,
 			To:    &to,
-			Input: scope.Memory.GetPtr(int64(inputOffset.Uint64()), int64(inputSize.Uint64())),
+			Input: copyMemory(inputOffset, inputSize),
 		})
 		if op == vm.CALL || op == vm.CALLCODE {
-			call.Value = scope.Stack.Back(2).Bytes()
+			trace.Value = scope.Stack.Back(2).Bytes()
 		}
-		t.traces = append(t.traces, call)
+		t.traces = append(t.traces, trace)
+		t.callsNumber++
 		t.descended = true
 		return
 	case vm.JUMP:
 		fallthrough
-	case vm.JUMPI:
-		fallthrough
+	//case vm.JUMPI:
+	//	fallthrough
 	case vm.JUMPDEST:
+		from := scope.Contract.Address()
 		jump := mergeBase(Trace{
+			From:  &from,
 			Stack: append([]uint256.Int(nil), scope.Stack.Data...),
 			//Memory: scope.Memory.Data(),
 		})
@@ -201,7 +211,7 @@ func (t *sentioTracer) CaptureState(pc uint64, op vm.OpCode, gas, cost uint64, s
 		topicCount := 0xf & op
 		logOffset := scope.Stack.Peek()
 		logSize := scope.Stack.Back(1)
-		data := scope.Memory.GetPtr(int64(logOffset.Uint64()), int64(logSize.Uint64()))
+		data := copyMemory(logOffset, logSize)
 		var topics []hexutil.Bytes
 		//stackLen := scope.Stack.Len()
 		for i := 0; i < int(topicCount); i++ {
@@ -221,8 +231,8 @@ func (t *sentioTracer) CaptureState(pc uint64, op vm.OpCode, gas, cost uint64, s
 	// need to extract if from within the call as there may be funky gas dynamics
 	// with regard to requested and actually given gas (2300 stipend, 63/64 rule).
 	if t.descended {
-		if depth >= t.currentDepth {
-			t.currentGas = gas
+		if depth >= t.callsNumber { // how about currentDepth?
+			t.currentGas = math.HexOrDecimal64(gas)
 			//t.traces[topIdx].Gas = gas
 		} else {
 			// TODO(karalabe): The call was made to a plain account. We currently don't
@@ -239,11 +249,16 @@ func (t *sentioTracer) CaptureState(pc uint64, op vm.OpCode, gas, cost uint64, s
 		return
 	}
 
-	if depth == t.currentDepth-1 {
+	if depth == t.callsNumber-1 {
+		t.callsNumber--
 		trace := Trace{
 			Type:  "CALLEND",
-			GasIn: gas,
+			GasIn: math.HexOrDecimal64(gas),
 			Value: scope.Stack.Peek().Bytes(),
+		}
+		if t.currentGas != 0 {
+			trace.Gas = t.currentGas
+			t.currentGas = 0
 		}
 		t.traces = append(t.traces, trace)
 	}
@@ -333,6 +348,7 @@ func newSentioTracer(name string, ctx *tracers.Context, cfg json.RawMessage) (tr
 	// TODO add configures
 	return &sentioTracer{
 		//internalCall: true,
+		callsNumber: 1,
 	}, nil
 }
 
