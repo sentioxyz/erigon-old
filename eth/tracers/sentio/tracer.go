@@ -30,6 +30,9 @@ type sentioTracer struct {
 	rootTrace   Trace
 }
 
+type TraceBase interface {
+}
+
 type Trace struct {
 	//op      vm.OpCode
 	Type    string              `json:"type"`
@@ -44,7 +47,7 @@ type Trace struct {
 
 	// Used by call
 	To          *libcommon.Address `json:"to,omitempty"`
-	Input       hexutil.Bytes      `json:"input,omitempty"` // TODO check if this could be omit
+	Input       hexutil.Bytes      `json:"input"` // TODO no 0x for
 	Value       hexutil.Bytes      `json:"value"`
 	ErrorString string             `json:"error,omitempty"`
 
@@ -126,9 +129,7 @@ func (t *sentioTracer) CaptureState(pc uint64, op vm.OpCode, gas, cost uint64, s
 		})
 		t.traces = append(t.traces, trace)
 		return
-	case vm.CREATE:
-		fallthrough
-	case vm.CREATE2:
+	case vm.CREATE, vm.CREATE2:
 		// If a new contract is being created, add to the call stack
 		inputOffset := scope.Stack.Back(1)
 		inputSize := scope.Stack.Back(2)
@@ -154,13 +155,7 @@ func (t *sentioTracer) CaptureState(pc uint64, op vm.OpCode, gas, cost uint64, s
 		})
 		t.traces = append(t.traces, trace)
 		return
-	case vm.CALL:
-		fallthrough
-	case vm.CALLCODE:
-		fallthrough
-	case vm.DELEGATECALL:
-		fallthrough
-	case vm.STATICCALL:
+	case vm.CALL, vm.CALLCODE, vm.DELEGATECALL, vm.STATICCALL:
 		// If a new method invocation is being done, add to the call stack
 		to := libcommon.BytesToAddress(scope.Stack.Back(1).Bytes())
 		if t.isPrecompiled(to) {
@@ -186,11 +181,7 @@ func (t *sentioTracer) CaptureState(pc uint64, op vm.OpCode, gas, cost uint64, s
 		t.callsNumber++
 		t.descended = true
 		return
-	case vm.JUMP:
-		fallthrough
-	//case vm.JUMPI:
-	//	fallthrough
-	case vm.JUMPDEST:
+	case vm.JUMP, vm.JUMPDEST:
 		from := scope.Contract.Address()
 
 		//var stack []uint256.Int
@@ -207,16 +198,8 @@ func (t *sentioTracer) CaptureState(pc uint64, op vm.OpCode, gas, cost uint64, s
 		})
 		t.traces = append(t.traces, jump)
 		return
-	case vm.LOG0:
-		fallthrough
-	case vm.LOG1:
-		fallthrough
-	case vm.LOG2:
-		fallthrough
-	case vm.LOG3:
-		fallthrough
-	case vm.LOG4:
-		topicCount := 0xf & op
+	case vm.LOG0, vm.LOG1, vm.LOG2, vm.LOG3, vm.LOG4:
+		topicCount := int(op - vm.LOG0)
 		logOffset := scope.Stack.Peek()
 		logSize := scope.Stack.Back(1)
 		data := copyMemory(logOffset, logSize)
