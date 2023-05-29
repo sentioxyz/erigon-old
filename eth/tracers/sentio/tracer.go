@@ -114,7 +114,7 @@ func (t *sentioTracer) CaptureState(pc uint64, op vm.OpCode, gas, cost uint64, s
 
 	var copyMemory = func(offset *uint256.Int, size *uint256.Int) []byte {
 		// TODO check if we should use getPtr or getCopy
-		return scope.Memory.GetPtr(int64(offset.Uint64()), int64(size.Uint64()))
+		return scope.Memory.GetCopy(int64(offset.Uint64()), int64(size.Uint64()))
 	}
 
 	switch op {
