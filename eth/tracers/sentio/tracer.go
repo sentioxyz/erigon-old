@@ -189,7 +189,7 @@ func (t *sentioTracer) CaptureState(pc uint64, op vm.OpCode, gas, cost uint64, s
 		t.callsNumber++
 		t.descended = true
 		return
-	case vm.JUMP, vm.JUMPDEST:
+	case vm.JUMP, vm.JUMPI, vm.JUMPDEST:
 		from := scope.Contract.Address()
 
 		//var stack []uint256.Int
