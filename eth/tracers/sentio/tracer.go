@@ -10,14 +10,25 @@ import (
 	"github.com/ledgerwatch/erigon/common/math"
 	"github.com/ledgerwatch/erigon/core/vm"
 	"github.com/ledgerwatch/erigon/eth/tracers"
+	"github.com/ledgerwatch/log/v3"
 )
+
+type functionConfig struct {
+	Pc           uint64 `json:"pc"`
+	InputMemory  bool   `json:"inputMemory"`
+	OutputMemory bool   `json:"outputMemory"`
+}
+
+type sentioTracerConfig struct {
+	Functions map[string][]functionConfig `json:"functions"`
+}
 
 func init() {
 	tracers.RegisterLookup(false, newSentioTracer)
 }
 
 type sentioTracer struct {
-	//internalCall bool
+	config            sentioTracerConfig
 	env               vm.VMInterface
 	activePrecompiles []libcommon.Address
 
@@ -48,7 +59,7 @@ type Trace struct {
 
 	// Used by call
 	To          *libcommon.Address `json:"to,omitempty"`
-	Input       hexutil.Bytes      `json:"input"` // TODO no 0x for
+	Input       string             `json:"input,omitempty"` // TODO better struct it and make it bytes
 	Value       hexutil.Bytes      `json:"value"`
 	ErrorString string             `json:"error,omitempty"`
 
@@ -86,7 +97,7 @@ func (t *sentioTracer) CaptureStart(env vm.VMInterface, from libcommon.Address, 
 		From:  &from,
 		To:    &to,
 		Gas:   math.HexOrDecimal64(gas),
-		Input: input,
+		Input: hexutil.Bytes(input).String(),
 		Value: value.Bytes(),
 	}
 }
@@ -123,7 +134,7 @@ func (t *sentioTracer) CaptureState(pc uint64, op vm.OpCode, gas, cost uint64, s
 		return trace
 	}
 
-	var copyMemory = func(offset *uint256.Int, size *uint256.Int) []byte {
+	var copyMemory = func(offset *uint256.Int, size *uint256.Int) hexutil.Bytes {
 		// TODO check if we should use getPtr or getCopy
 		return scope.Memory.GetCopy(int64(offset.Uint64()), int64(size.Uint64()))
 	}
@@ -145,7 +156,7 @@ func (t *sentioTracer) CaptureState(pc uint64, op vm.OpCode, gas, cost uint64, s
 		from := scope.Contract.Address()
 		trace := mergeBase(Trace{
 			From:  &from,
-			Input: copyMemory(inputOffset, inputSize),
+			Input: copyMemory(inputOffset, inputSize).String(),
 			Value: scope.Stack.Peek().Bytes(),
 		})
 		t.traces = append(t.traces, trace)
@@ -180,7 +191,7 @@ func (t *sentioTracer) CaptureState(pc uint64, op vm.OpCode, gas, cost uint64, s
 		trace := mergeBase(Trace{
 			From:  &from,
 			To:    &to,
-			Input: copyMemory(inputOffset, inputSize),
+			Input: copyMemory(inputOffset, inputSize).String(),
 		})
 		if op == vm.CALL || op == vm.CALLCODE {
 			trace.Value = scope.Stack.Back(2).Bytes()
@@ -189,7 +200,7 @@ func (t *sentioTracer) CaptureState(pc uint64, op vm.OpCode, gas, cost uint64, s
 		t.callsNumber++
 		t.descended = true
 		return
-	case vm.JUMP, vm.JUMPI, vm.JUMPDEST:
+	case vm.JUMP, vm.JUMPDEST:
 		from := scope.Contract.Address()
 
 		//var stack []uint256.Int
@@ -342,9 +353,16 @@ func newSentioTracer(name string, ctx *tracers.Context, cfg json.RawMessage) (tr
 		return nil, errors.New("no tracer found")
 	}
 
-	// TODO add configures
+	var config sentioTracerConfig
+	if cfg != nil {
+		if err := json.Unmarshal(cfg, &config); err != nil {
+			return nil, err
+		}
+		log.Info("sentioTracer config", "config", config)
+	}
+
 	return &sentioTracer{
-		//internalCall: true,
+		config:      config,
 		callsNumber: 1,
 	}, nil
 }
