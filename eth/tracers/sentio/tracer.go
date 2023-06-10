@@ -230,6 +230,18 @@ func (t *sentioTracer) CaptureState(pc uint64, op vm.OpCode, gas, cost uint64, s
 		return scope.Memory.GetCopy(int64(offset.Uint64()), int64(size.Uint64()))
 	}
 
+	var copyStack = func(copySize int) []uint256.Int {
+		if copySize == 0 {
+			return nil
+		}
+		stackSize := scope.Stack.Len()
+		stack := make([]uint256.Int, stackSize)
+		for i := stackSize - copySize; i < stackSize; i++ {
+			stack[i] = scope.Stack.Data[i]
+		}
+		return stack
+	}
+
 	var formatMemory = func() *[]string {
 		memory := make([]string, 0, (scope.Memory.Len()+31)/32)
 		for i := 0; i+32 <= scope.Memory.Len(); i += 32 {
@@ -266,14 +278,15 @@ func (t *sentioTracer) CaptureState(pc uint64, op vm.OpCode, gas, cost uint64, s
 		fromStr := from.String()
 
 		if t.previousJump != nil { // vm.JumpDest and match with a previous jump (otherwise it's a jumpi)
-			t.previousJump.InputStack = append([]uint256.Int(nil), scope.Stack.Data...)
 			// Check if this is return
 			// TODO pontentially maintain a map for fast filtering
 			//log.Info("fromStr" + fromStr + ", callstack size" + fmt.Sprint(len(t.callStack)))
 			stackSize := len(t.callstack)
 
+			// Part 1: try process the trace as function return
 			for i := stackSize - 1; i >= 0; i-- {
-				//log.Info("callstack" + fmt.Sprint(t.callStack[i]))
+				// process internal call within the same contract
+				// no function info means another external call
 				functionInfo := t.callstack[i].function
 				if functionInfo == nil {
 					break
@@ -283,6 +296,7 @@ func (t *sentioTracer) CaptureState(pc uint64, op vm.OpCode, gas, cost uint64, s
 					break
 				}
 
+				// find a match
 				if t.callstack[i].exitPc == pc {
 					// find a match, pop the stack, copy memory if needed
 
@@ -293,7 +307,7 @@ func (t *sentioTracer) CaptureState(pc uint64, op vm.OpCode, gas, cost uint64, s
 					// TODO maybe don't need return all
 					for j := stackSize - 1; j >= i; j-- {
 						t.callstack[j].GasUsed = math.HexOrDecimal64(uint64(t.callstack[j].Gas) - gas + t.callstack[j].gasCost)
-						t.callstack[j].OutputStack = append([]uint256.Int(nil), scope.Stack.Data...)
+						t.callstack[j].OutputStack = copyStack(t.callstack[j].function.OutputSize)
 						if functionInfo.OutputMemory {
 							t.callstack[j].OutputMemory = formatMemory()
 						}
@@ -305,6 +319,7 @@ func (t *sentioTracer) CaptureState(pc uint64, op vm.OpCode, gas, cost uint64, s
 				}
 			}
 
+			// Part 2: try process the trace as function call
 			funcInfo := t.getFunctionInfo(fromStr, pc)
 			//log.Info("function info" + fmt.Sprint(funcInfo))
 
@@ -333,6 +348,7 @@ func (t *sentioTracer) CaptureState(pc uint64, op vm.OpCode, gas, cost uint64, s
 				t.previousJump.exitPc = scope.Stack.Back(funcInfo.InputSize).Uint64()
 				t.previousJump.function = funcInfo
 				t.previousJump.FunctionPc = pc
+				t.previousJump.InputStack = copyStack(funcInfo.InputSize)
 				if t.config.Debug {
 					t.previousJump.Name = funcInfo.Name
 				}
