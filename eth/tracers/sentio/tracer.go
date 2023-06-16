@@ -203,7 +203,6 @@ func (t *sentioTracer) CaptureState(pc uint64, op vm.OpCode, gas, cost uint64, s
 	if t.callstack[0].Index == -1 && t.entryPc[pc] {
 		//fillback the index and PC for root
 		t.callstack[0].Pc = pc
-		t.callstack[0].DefPc = pc
 		t.callstack[0].Index = t.index - 1
 		t.previousJump = nil
 		return

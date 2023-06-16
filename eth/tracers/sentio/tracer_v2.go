@@ -67,7 +67,7 @@ type functionInfo struct {
 
 type sentioTracerConfig struct {
 	Functions map[string][]functionInfo `json:"functions"`
-	Calls     map[string][]uint64[]       `json:"calls"`
+	Calls     map[string][]uint64[]    `json:"calls"`
 	Debug     bool                      `json:"debug"`
 }
 
