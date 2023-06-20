@@ -16,6 +16,24 @@ import (
 	"github.com/ledgerwatch/log/v3"
 )
 
+type functionInfo struct {
+	address       string
+	Name          string `json:"name"`
+	SignatureHash string `json:"signatureHash"`
+
+	Pc           uint64 `json:"pc"`
+	InputSize    int    `json:"inputSize"`
+	InputMemory  bool   `json:"inputMemory"`
+	OutputSize   int    `json:"outputSize"`
+	OutputMemory bool   `json:"outputMemory"`
+}
+
+type sentioTracerConfig struct {
+	Functions map[string][]functionInfo `json:"functions"`
+	Calls     map[string][]uint64       `json:"calls"`
+	Debug     bool                      `json:"debug"`
+}
+
 func init() {
 	tracers.RegisterLookup(false, newSentioTracer)
 }
@@ -413,6 +431,19 @@ func (t *sentioTracer) GetResult() (json.RawMessage, error) {
 
 	if len(t.callstack) != 1 {
 		log.Error("callstack length is not 1, is " + fmt.Sprint(len(t.callstack)))
+	}
+
+	// TRIM the first jump that is same as root call
+	// TODO we should find more elegant way to fix this
+	if len(t.callstack[0].Traces) == 1 {
+		rootTrace := t.callstack[0]
+		jumpTrace := t.callstack[0].Traces[0]
+		rootFunDef := t.functionMap[rootTrace.To.String()][rootTrace.Pc]
+		jumpFunDef := t.functionMap[jumpTrace.From.String()][jumpTrace.FunctionPc]
+		if rootFunDef.SignatureHash == jumpFunDef.SignatureHash {
+			log.Info("skip first jump trace that has same def as root call")
+			rootTrace.Traces = jumpTrace.Traces
+		}
 	}
 
 	return json.Marshal(t.callstack[0])
