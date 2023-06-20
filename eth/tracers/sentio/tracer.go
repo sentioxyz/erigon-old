@@ -160,7 +160,7 @@ func (t *sentioTracer) CaptureEnd(output []byte, usedGas uint64, err error) {
 	currentGas := uint64(t.callstack[stackSize-1].Gas) - usedGas
 	for j := stackSize - 1; j > 0; j-- {
 		t.callstack[j].Output = common.CopyBytes(output)
-		t.callstack[j].GasUsed = math.HexOrDecimal64(uint64(t.callstack[j].Gas) - currentGas + t.callstack[j].gasCost)
+		t.callstack[j].GasUsed = math.HexOrDecimal64(uint64(t.callstack[j].Gas) - currentGas)
 		t.callstack[j-1].Traces = append(t.callstack[j-1].Traces, t.callstack[j])
 	}
 	t.callstack = t.callstack[:1]
@@ -199,10 +199,10 @@ func (t *sentioTracer) CaptureExit(output []byte, usedGas uint64, err error) {
 
 		call := t.callstack[i]
 		call.GasUsed = math.HexOrDecimal64(usedGas)
-		currentGas := uint64(call.Gas) - usedGas + call.gasCost
+		currentGas := uint64(call.Gas) - usedGas
 		for j := stackSize - 1; j >= i; j-- {
 			t.callstack[j].Output = common.CopyBytes(output)
-			t.callstack[j].GasUsed = math.HexOrDecimal64(uint64(t.callstack[j].Gas) - currentGas + t.callstack[j].gasCost)
+			t.callstack[j].GasUsed = math.HexOrDecimal64(uint64(t.callstack[j].Gas) - currentGas)
 			t.callstack[j-1].Traces = append(t.callstack[j-1].Traces, t.callstack[j])
 		}
 		call.GasUsed = math.HexOrDecimal64(usedGas)
@@ -324,7 +324,7 @@ func (t *sentioTracer) CaptureState(pc uint64, op vm.OpCode, gas, cost uint64, s
 
 					// TODO maybe don't need return all
 					for j := stackSize - 1; j >= i; j-- {
-						t.callstack[j].GasUsed = math.HexOrDecimal64(uint64(t.callstack[j].Gas) - gas + t.callstack[j].gasCost)
+						t.callstack[j].GasUsed = math.HexOrDecimal64(uint64(t.callstack[j].Gas) - gas)
 						t.callstack[j].OutputStack = copyStack(t.callstack[j].function.OutputSize)
 						if functionInfo.OutputMemory {
 							t.callstack[j].OutputMemory = formatMemory()
