@@ -277,6 +277,7 @@ func (t *sentioTracer) CaptureState(pc uint64, op vm.OpCode, gas, cost uint64, s
 		t.callstack = append(t.callstack, call)
 	case vm.JUMP:
 		from := scope.Contract.CodeAddr
+
 		jump := mergeBase(Trace{
 			From: from,
 			//InputStack: append([]uint256.Int(nil), scope.Stack.Data...), // TODO only need partial
@@ -439,10 +440,12 @@ func (t *sentioTracer) GetResult() (json.RawMessage, error) {
 		rootTrace := t.callstack[0]
 		jumpTrace := t.callstack[0].Traces[0]
 		rootFunDef := t.functionMap[rootTrace.To.String()][rootTrace.Pc]
-		jumpFunDef := t.functionMap[jumpTrace.From.String()][jumpTrace.FunctionPc]
-		if rootFunDef.SignatureHash == jumpFunDef.SignatureHash {
-			log.Info("skip first jump trace that has same def as root call")
-			rootTrace.Traces = jumpTrace.Traces
+		if jumpTrace.Type == vm.JUMP.String() {
+			jumpFunDef := t.functionMap[jumpTrace.From.String()][jumpTrace.FunctionPc]
+			if rootFunDef.SignatureHash == jumpFunDef.SignatureHash {
+				log.Info("skip first jump trace that has same def as root call")
+				rootTrace.Traces = jumpTrace.Traces
+			}
 		}
 	}
 
