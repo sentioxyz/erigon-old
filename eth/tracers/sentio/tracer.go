@@ -84,7 +84,7 @@ type Trace struct {
 	// Only set in debug mode
 	TracerConfig *sentioTracerConfig `json:"tracerConfig,omitempty"`
 
-	RawTracesCount uint64 `json:"rawTracesCount,omitempty"`
+	RawTracesCount int `json:"rawTracesCount,omitempty"`
 
 	// Use for internal call stack organization
 	// The jump to go into the function
