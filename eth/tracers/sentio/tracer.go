@@ -45,7 +45,8 @@ type Trace struct {
 	Type string `json:"type"`
 	Pc   uint64 `json:"pc"`
 	// Global index of the trace
-	Index int `json:"index"`
+	StartIndex int `json:"startIndex"`
+	EndIndex   int `json:"endIndex"`
 
 	// Gas remaining before the OP
 	Gas math.HexOrDecimal64 `json:"gas"`
@@ -112,10 +113,11 @@ func (t *sentioTracer) CaptureTxStart(gasLimit uint64) {
 }
 
 func (t *sentioTracer) CaptureTxEnd(restGas uint64) {
+	t.callstack[0].EndIndex = t.index
 	t.callstack[0].GasUsed = math.HexOrDecimal64(t.gasLimit - restGas)
-	if t.callstack[0].Index == -1 {
+	if t.callstack[0].StartIndex == -1 {
 		// It's possible that we can't correctly locate the PC that match the entry function (check why), in this case we need to 0 for the user
-		t.callstack[0].Index = 0
+		t.callstack[0].StartIndex = 0
 	}
 }
 
@@ -123,12 +125,12 @@ func (t *sentioTracer) CaptureStart(env vm.VMInterface, from libcommon.Address, 
 	t.env = env
 
 	root := Trace{
-		Index: -1,
-		Type:  vm.CALL.String(),
-		From:  &from,
-		To:    &to,
-		Gas:   math.HexOrDecimal64(gas),
-		Input: hexutil.Bytes(input).String(),
+		StartIndex: -1,
+		Type:       vm.CALL.String(),
+		From:       &from,
+		To:         &to,
+		Gas:        math.HexOrDecimal64(gas),
+		Input:      hexutil.Bytes(input).String(),
 	}
 	if value != nil {
 		root.Value = value.Bytes()
@@ -153,6 +155,7 @@ func (t *sentioTracer) CaptureStart(env vm.VMInterface, from libcommon.Address, 
 }
 
 func (t *sentioTracer) CaptureEnd(output []byte, usedGas uint64, err error) {
+	t.callstack[0].EndIndex = t.index
 	t.callstack[0].GasUsed = math.HexOrDecimal64(usedGas)
 	t.callstack[0].Output = common.CopyBytes(output)
 
@@ -160,6 +163,7 @@ func (t *sentioTracer) CaptureEnd(output []byte, usedGas uint64, err error) {
 	currentGas := uint64(t.callstack[stackSize-1].Gas) - usedGas
 	for j := stackSize - 1; j > 0; j-- {
 		t.callstack[j].Output = common.CopyBytes(output)
+		t.callstack[j].EndIndex = t.index
 		t.callstack[j].GasUsed = math.HexOrDecimal64(uint64(t.callstack[j].Gas) - currentGas)
 		t.callstack[j-1].Traces = append(t.callstack[j-1].Traces, t.callstack[j])
 	}
@@ -198,14 +202,15 @@ func (t *sentioTracer) CaptureExit(output []byte, usedGas uint64, err error) {
 		}
 
 		call := t.callstack[i]
+		call.EndIndex = t.index
 		call.GasUsed = math.HexOrDecimal64(usedGas)
 		currentGas := uint64(call.Gas) - usedGas
 		for j := stackSize - 1; j >= i; j-- {
 			t.callstack[j].Output = common.CopyBytes(output)
+			t.callstack[j].EndIndex = t.index
 			t.callstack[j].GasUsed = math.HexOrDecimal64(uint64(t.callstack[j].Gas) - currentGas)
 			t.callstack[j-1].Traces = append(t.callstack[j-1].Traces, t.callstack[j])
 		}
-		call.GasUsed = math.HexOrDecimal64(usedGas)
 
 		t.callstack = t.callstack[:i]
 
@@ -219,10 +224,10 @@ func (t *sentioTracer) CaptureExit(output []byte, usedGas uint64, err error) {
 func (t *sentioTracer) CaptureState(pc uint64, op vm.OpCode, gas, cost uint64, scope *vm.ScopeContext, rData []byte, depth int, err error) {
 	t.index++
 
-	if t.callstack[0].Index == -1 && t.entryPc[pc] {
+	if t.callstack[0].StartIndex == -1 && t.entryPc[pc] {
 		//fillback the index and PC for root
 		t.callstack[0].Pc = pc
-		t.callstack[0].Index = t.index - 1
+		t.callstack[0].StartIndex = t.index - 1
 		t.previousJump = nil
 		return
 	}
@@ -232,7 +237,8 @@ func (t *sentioTracer) CaptureState(pc uint64, op vm.OpCode, gas, cost uint64, s
 		trace.Type = op.String()
 		trace.Gas = math.HexOrDecimal64(gas)
 		trace.gasCost = cost
-		trace.Index = t.index - 1
+		trace.StartIndex = t.index - 1
+		trace.EndIndex = t.index
 
 		// Assume it's single instruction, adjust it for jump and call
 		trace.GasUsed = math.HexOrDecimal64(cost)
@@ -325,6 +331,7 @@ func (t *sentioTracer) CaptureState(pc uint64, op vm.OpCode, gas, cost uint64, s
 
 					// TODO maybe don't need return all
 					for j := stackSize - 1; j >= i; j-- {
+						t.callstack[j].EndIndex = t.index
 						t.callstack[j].GasUsed = math.HexOrDecimal64(uint64(t.callstack[j].Gas) - gas)
 						t.callstack[j].OutputStack = copyStack(t.callstack[j].function.OutputSize)
 						if functionInfo.OutputMemory {
