@@ -331,7 +331,7 @@ func (t *sentioTracer) CaptureState(pc uint64, op vm.OpCode, gas, cost uint64, s
 
 					// TODO maybe don't need return all
 					for j := stackSize - 1; j >= i; j-- {
-						t.callstack[j].EndIndex = t.index
+						t.callstack[j].EndIndex = t.index - 1 // EndIndex should before the jumpdest
 						t.callstack[j].GasUsed = math.HexOrDecimal64(uint64(t.callstack[j].Gas) - gas)
 						t.callstack[j].OutputStack = copyStack(t.callstack[j].function.OutputSize)
 						if functionInfo.OutputMemory {
