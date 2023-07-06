@@ -441,21 +441,6 @@ func (t *sentioTracer) GetResult() (json.RawMessage, error) {
 		log.Error("callstack length is not 1, is " + fmt.Sprint(len(t.callstack)))
 	}
 
-	// TRIM the first jump that is same as root call
-	// TODO we should find more elegant way to fix this
-	if len(t.callstack[0].Traces) == 1 {
-		rootTrace := t.callstack[0]
-		jumpTrace := t.callstack[0].Traces[0]
-		rootFunDef := t.functionMap[rootTrace.To.String()][rootTrace.Pc]
-		if jumpTrace.Type == vm.JUMP.String() {
-			jumpFunDef := t.functionMap[jumpTrace.From.String()][jumpTrace.FunctionPc]
-			if rootFunDef.SignatureHash == jumpFunDef.SignatureHash {
-				log.Info("skip first jump trace that has same def as root call")
-				rootTrace.Traces = jumpTrace.Traces
-			}
-		}
-	}
-
 	return json.Marshal(t.callstack[0])
 }
 
