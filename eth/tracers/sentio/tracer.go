@@ -308,7 +308,7 @@ func (t *sentioTracer) CaptureState(pc uint64, op vm.OpCode, gas, cost uint64, s
 			//log.Info("fromStr" + fromStr + ", callstack size" + fmt.Sprint(len(t.callStack)))
 			stackSize := len(t.callstack)
 
-			// Part 1: try process the trace as function return
+			// Part 1: try process the trace as function call exit
 			for i := stackSize - 1; i >= 0; i-- {
 				// process internal call within the same contract
 				// no function info means another external call
@@ -337,6 +337,9 @@ func (t *sentioTracer) CaptureState(pc uint64, op vm.OpCode, gas, cost uint64, s
 						if functionInfo.OutputMemory {
 							t.callstack[j].OutputMemory = formatMemory()
 						}
+						if err != nil {
+							t.callstack[j].Error = err.Error()
+						}
 						t.callstack[j-1].Traces = append(t.callstack[j-1].Traces, t.callstack[j])
 					}
 					t.callstack = t.callstack[:i]
@@ -345,7 +348,7 @@ func (t *sentioTracer) CaptureState(pc uint64, op vm.OpCode, gas, cost uint64, s
 				}
 			}
 
-			// Part 2: try process the trace as function call
+			// Part 2: try process the trace as function call entry
 			funcInfo := t.getFunctionInfo(fromStr, pc)
 			//log.Info("function info" + fmt.Sprint(funcInfo))
 
