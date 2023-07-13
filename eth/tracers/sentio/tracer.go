@@ -77,7 +77,8 @@ type Trace struct {
 	// Used by log
 	Address *libcommon.Address `json:"address,omitempty"`
 	Data    hexutil.Bytes      `json:"data,omitempty"`
-	Topics  []hexutil.Bytes    `json:"topics,omitempty"`
+
+	Topics [][32]byte `json:"topics,omitempty"`
 
 	// Only used by root
 	Traces []Trace `json:"traces,omitempty"`
@@ -396,10 +397,10 @@ func (t *sentioTracer) CaptureState(pc uint64, op vm.OpCode, gas, cost uint64, s
 		logOffset := scope.Stack.Peek()
 		logSize := scope.Stack.Back(1)
 		data := copyMemory(logOffset, logSize)
-		var topics []hexutil.Bytes
+		var topics [][32]byte
 		//stackLen := scope.Stack.Len()
 		for i := 0; i < topicCount; i++ {
-			topics = append(topics, scope.Stack.Back(2+i).Bytes())
+			topics = append(topics, scope.Stack.Back(2+i).Bytes32())
 		}
 		addr := scope.Contract.Address()
 		l := mergeBase(Trace{
