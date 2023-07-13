@@ -29,9 +29,10 @@ type functionInfo struct {
 }
 
 type sentioTracerConfig struct {
-	Functions map[string][]functionInfo `json:"functions"`
-	Calls     map[string][]uint64       `json:"calls"`
-	Debug     bool                      `json:"debug"`
+	Functions         map[string][]functionInfo `json:"functions"`
+	Calls             map[string][]uint64       `json:"calls"`
+	Debug             bool                      `json:"debug"`
+	WithInternalCalls bool                      `json:"withInternalCalls"`
 }
 
 func init() {
@@ -168,6 +169,9 @@ func (t *sentioTracer) CaptureEnd(output []byte, usedGas uint64, err error) {
 		t.callstack[j].GasUsed = math.HexOrDecimal64(uint64(t.callstack[j].Gas) - currentGas)
 		t.callstack[j-1].Traces = append(t.callstack[j-1].Traces, t.callstack[j])
 	}
+	if !t.config.WithInternalCalls {
+		t.callstack[0].processError(output, err)
+	}
 	t.callstack = t.callstack[:1]
 }
 
@@ -213,8 +217,10 @@ func (t *sentioTracer) CaptureExit(output []byte, usedGas uint64, err error) {
 			t.callstack[j-1].Traces = append(t.callstack[j-1].Traces, t.callstack[j])
 		}
 
+		if !t.config.WithInternalCalls {
+			t.callstack[i].processError(output, err)
+		}
 		t.callstack = t.callstack[:i]
-
 		return
 	}
 
@@ -282,7 +288,27 @@ func (t *sentioTracer) CaptureState(pc uint64, op vm.OpCode, gas, cost uint64, s
 			Type: op.String(),
 		})
 		t.callstack = append(t.callstack, call)
+	case vm.LOG0, vm.LOG1, vm.LOG2, vm.LOG3, vm.LOG4:
+		topicCount := int(op - vm.LOG0)
+		logOffset := scope.Stack.Peek()
+		logSize := scope.Stack.Back(1)
+		data := copyMemory(logOffset, logSize)
+		var topics []libcommon.Hash
+		//stackLen := scope.Stack.Len()
+		for i := 0; i < topicCount; i++ {
+			topics = append(topics, scope.Stack.Back(2+i).Bytes32())
+		}
+		addr := scope.Contract.Address()
+		l := mergeBase(Trace{
+			Address: &addr,
+			Data:    data,
+			Topics:  topics,
+		})
+		t.callstack[len(t.callstack)-1].Traces = append(t.callstack[len(t.callstack)-1].Traces, l)
 	case vm.JUMP:
+		if !t.config.WithInternalCalls {
+			break
+		}
 		from := scope.Contract.CodeAddr
 
 		jump := mergeBase(Trace{
@@ -300,6 +326,9 @@ func (t *sentioTracer) CaptureState(pc uint64, op vm.OpCode, gas, cost uint64, s
 			t.callstack[len(t.callstack)-1].Traces = append(t.callstack[len(t.callstack)-1].Traces, jump)
 		}
 	case vm.JUMPDEST:
+		if !t.config.WithInternalCalls {
+			break
+		}
 		from := scope.Contract.CodeAddr
 		fromStr := from.String()
 
@@ -392,24 +421,10 @@ func (t *sentioTracer) CaptureState(pc uint64, op vm.OpCode, gas, cost uint64, s
 			// reset previous jump regardless
 			t.previousJump = nil
 		}
-	case vm.LOG0, vm.LOG1, vm.LOG2, vm.LOG3, vm.LOG4:
-		topicCount := int(op - vm.LOG0)
-		logOffset := scope.Stack.Peek()
-		logSize := scope.Stack.Back(1)
-		data := copyMemory(logOffset, logSize)
-		var topics []libcommon.Hash
-		//stackLen := scope.Stack.Len()
-		for i := 0; i < topicCount; i++ {
-			topics = append(topics, scope.Stack.Back(2+i).Bytes32())
-		}
-		addr := scope.Contract.Address()
-		l := mergeBase(Trace{
-			Address: &addr,
-			Data:    data,
-			Topics:  topics,
-		})
-		t.callstack[len(t.callstack)-1].Traces = append(t.callstack[len(t.callstack)-1].Traces, l)
 	case vm.REVERT:
+		if !t.config.WithInternalCalls {
+			break
+		}
 		logOffset := scope.Stack.Peek()
 		logSize := scope.Stack.Back(1)
 		output := scope.Memory.GetPtr(int64(logOffset.Uint64()), int64(logSize.Uint64()))
@@ -423,6 +438,9 @@ func (t *sentioTracer) CaptureState(pc uint64, op vm.OpCode, gas, cost uint64, s
 		}
 		t.callstack[len(t.callstack)-1].Traces = append(t.callstack[len(t.callstack)-1].Traces, trace)
 	default:
+		if !t.config.WithInternalCalls {
+			break
+		}
 		if err != nil {
 			// Error happen, attach the error OP if not already processed
 			t.callstack[len(t.callstack)-1].Traces = append(t.callstack[len(t.callstack)-1].Traces, mergeBase(Trace{}))
@@ -528,4 +546,27 @@ func (t *sentioTracer) isCall(address string, pc uint64) bool {
 		return info
 	}
 	return false
+}
+
+// Only used in non detail mode
+func (f *Trace) processError(output []byte, err error) {
+	//output = common.CopyBytes(output)
+	if err == nil {
+		//f.Output = output
+		return
+	}
+	f.Error = err.Error()
+	if f.Type == vm.CREATE.String() || f.Type == vm.CREATE2.String() {
+		f.To = &libcommon.Address{}
+	}
+	if !errors.Is(err, vm.ErrExecutionReverted) || len(output) == 0 {
+		return
+	}
+	//f.Output = output
+	if len(output) < 4 {
+		return
+	}
+	if unpacked, err := abi.UnpackRevert(output); err == nil {
+		f.Revertal = unpacked
+	}
 }
