@@ -62,7 +62,7 @@ type Trace struct {
 	// Input
 	Input string `json:"input,omitempty"` // TODO better struct it and make it bytes
 	// Ether transfered
-	Value hexutil.Bytes `json:"value,omitempty"`
+	Value *hexutil.Big `json:"value,omitempty"`
 	// Return for calls
 	Output   hexutil.Bytes `json:"output,omitempty"`
 	Error    string        `json:"error,omitempty"`
@@ -135,7 +135,7 @@ func (t *sentioTracer) CaptureStart(env vm.VMInterface, from libcommon.Address, 
 		Input:      hexutil.Bytes(input).String(),
 	}
 	if value != nil {
-		root.Value = value.Bytes()
+		root.Value = (*hexutil.Big)(value.ToBig())
 	}
 	if create {
 		root.Type = vm.CREATE.String()
@@ -184,7 +184,7 @@ func (t *sentioTracer) CaptureEnter(typ vm.OpCode, from libcommon.Address, to li
 	t.callstack[size-1].Gas = math.HexOrDecimal64(gas)
 
 	if value != nil {
-		t.callstack[size-1].Value = value.Bytes()
+		t.callstack[size-1].Value = (*hexutil.Big)(value.ToBig())
 	}
 }
 
