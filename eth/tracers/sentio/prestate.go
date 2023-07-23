@@ -58,17 +58,18 @@ type accountMarshaling struct {
 }
 
 type sentioPrestateTracer struct {
-	env       vm.VMInterface
-	pre       state
-	post      state
-	create    bool
-	to        libcommon.Address
-	gasLimit  uint64 // Amount of gas bought for the whole tx
-	config    prestateTracerConfig
-	interrupt uint32 // Atomic flag to signal execution interruption
-	reason    error  // Textual reason for the interruption
-	created   map[libcommon.Address]bool
-	deleted   map[libcommon.Address]bool
+	env         vm.VMInterface
+	pre         state
+	post        state
+	create      bool
+	to          libcommon.Address
+	gasLimit    uint64 // Amount of gas bought for the whole tx
+	config      prestateTracerConfig
+	interrupt   uint32 // Atomic flag to signal execution interruption
+	reason      error  // Textual reason for the interruption
+	created     map[libcommon.Address]bool
+	deleted     map[libcommon.Address]bool
+	mappingKeys map[string][]byte
 }
 
 func (t *sentioPrestateTracer) CaptureEnter(typ vm.OpCode, from libcommon.Address, to libcommon.Address, precompile bool, create bool, input []byte, gas uint64, value *uint256.Int, code []byte) {
@@ -157,6 +158,12 @@ func (t *sentioPrestateTracer) CaptureState(pc uint64, op vm.OpCode, gas, cost u
 	stackLen := len(stackData)
 	caller := scope.Contract.Address()
 	switch {
+	case stackLen >= 2 && op == vm.KECCAK256:
+		offset := stackData[stackLen-1]
+		size := stackData[stackLen-2]
+		rawkey := scope.Memory.GetCopy(int64(offset.Uint64()), int64(size.Uint64()))
+		hashOfKey := crypto.Keccak256(rawkey)
+		t.mappingKeys[string(rawkey)] = hashOfKey
 	case stackLen >= 1 && (op == vm.SLOAD || op == vm.SSTORE):
 		slot := libcommon.Hash(stackData[stackLen-1].Bytes32())
 		t.pre[caller].CodeAddress = scope.Contract.CodeAddr
