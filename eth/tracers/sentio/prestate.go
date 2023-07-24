@@ -270,11 +270,15 @@ func (t *sentioPrestateTracer) GetResult() (json.RawMessage, error) {
 	var err error
 	if t.config.DiffMode {
 		res, err = json.Marshal(struct {
-			Post state `json:"post"`
-			Pre  state `json:"pre"`
-		}{t.post, t.pre})
+			Post        state             `json:"post"`
+			Pre         state             `json:"pre"`
+			MappingKeys map[string][]byte `json:"mappingKeys"`
+		}{t.post, t.pre, t.mappingKeys})
 	} else {
-		res, err = json.Marshal(t.pre)
+		res, err = json.Marshal(struct {
+			Pre         state             `json:"pre"`
+			MappingKeys map[string][]byte `json:"mappingKeys"`
+		}{t.pre, t.mappingKeys})
 	}
 	if err != nil {
 		return nil, err
