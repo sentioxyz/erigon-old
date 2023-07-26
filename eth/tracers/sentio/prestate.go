@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"github.com/ledgerwatch/erigon/common"
 	"math/big"
 	"sync/atomic"
 
@@ -69,7 +70,7 @@ type sentioPrestateTracer struct {
 	reason      error  // Textual reason for the interruption
 	created     map[libcommon.Address]bool
 	deleted     map[libcommon.Address]bool
-	mappingKeys map[string][]byte
+	mappingKeys map[string]string
 }
 
 func (t *sentioPrestateTracer) CaptureEnter(typ vm.OpCode, from libcommon.Address, to libcommon.Address, precompile bool, create bool, input []byte, gas uint64, value *uint256.Int, code []byte) {
@@ -105,7 +106,7 @@ func newSentioPrestateTracer(name string, ctx *tracers.Context, cfg json.RawMess
 		config:      config,
 		created:     make(map[libcommon.Address]bool),
 		deleted:     make(map[libcommon.Address]bool),
-		mappingKeys: make(map[string][]byte),
+		mappingKeys: make(map[string]string),
 	}, nil
 }
 
@@ -164,7 +165,7 @@ func (t *sentioPrestateTracer) CaptureState(pc uint64, op vm.OpCode, gas, cost u
 		size := stackData[stackLen-2]
 		rawkey := scope.Memory.GetCopy(int64(offset.Uint64()), int64(size.Uint64()))
 		hashOfKey := crypto.Keccak256(rawkey)
-		t.mappingKeys[string(rawkey)] = hashOfKey
+		t.mappingKeys[common.Bytes2Hex(rawkey)] = "0x" + common.Bytes2Hex(hashOfKey)
 	case stackLen >= 1 && (op == vm.SLOAD || op == vm.SSTORE):
 		slot := libcommon.Hash(stackData[stackLen-1].Bytes32())
 		t.pre[caller].CodeAddress = scope.Contract.CodeAddr
