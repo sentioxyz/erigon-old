@@ -169,9 +169,8 @@ func (t *sentioTracer) CaptureEnd(output []byte, usedGas uint64, err error) {
 		t.callstack[j].GasUsed = math.HexOrDecimal64(uint64(t.callstack[j].Gas) - currentGas)
 		t.callstack[j-1].Traces = append(t.callstack[j-1].Traces, t.callstack[j])
 	}
-	if !t.config.WithInternalCalls {
-		t.callstack[0].processError(output, err)
-	}
+
+	t.callstack[0].processError(output, err)
 	t.callstack = t.callstack[:1]
 }
 
@@ -206,10 +205,12 @@ func (t *sentioTracer) CaptureExit(output []byte, usedGas uint64, err error) {
 			log.Info(fmt.Sprintf("tail call optimization [external] size %d", stackSize-i))
 		}
 
-		call := t.callstack[i]
+		call := &t.callstack[i]
 		call.EndIndex = t.index
 		call.GasUsed = math.HexOrDecimal64(usedGas)
 		currentGas := uint64(call.Gas) - usedGas
+		call.processError(output, err)
+
 		for j := stackSize - 1; j >= i; j-- {
 			t.callstack[j].Output = common.CopyBytes(output)
 			t.callstack[j].EndIndex = t.index
@@ -217,9 +218,6 @@ func (t *sentioTracer) CaptureExit(output []byte, usedGas uint64, err error) {
 			t.callstack[j-1].Traces = append(t.callstack[j-1].Traces, t.callstack[j])
 		}
 
-		if !t.config.WithInternalCalls {
-			t.callstack[i].processError(output, err)
-		}
 		t.callstack = t.callstack[:i]
 		return
 	}
