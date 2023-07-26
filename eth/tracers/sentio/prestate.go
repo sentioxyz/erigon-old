@@ -274,12 +274,12 @@ func (t *sentioPrestateTracer) GetResult() (json.RawMessage, error) {
 		res, err = json.Marshal(struct {
 			Post        state             `json:"post"`
 			Pre         state             `json:"pre"`
-			MappingKeys map[string][]byte `json:"mappingKeys"`
+			MappingKeys map[string]string `json:"mappingKeys"`
 		}{t.post, t.pre, t.mappingKeys})
 	} else {
 		res, err = json.Marshal(struct {
 			Pre         state             `json:"pre"`
-			MappingKeys map[string][]byte `json:"mappingKeys"`
+			MappingKeys map[string]string `json:"mappingKeys"`
 		}{t.pre, t.mappingKeys})
 	}
 	if err != nil {
