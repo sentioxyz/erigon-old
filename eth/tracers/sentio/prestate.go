@@ -100,11 +100,12 @@ func newSentioPrestateTracer(name string, ctx *tracers.Context, cfg json.RawMess
 		}
 	}
 	return &sentioPrestateTracer{
-		pre:     state{},
-		post:    state{},
-		config:  config,
-		created: make(map[libcommon.Address]bool),
-		deleted: make(map[libcommon.Address]bool),
+		pre:         state{},
+		post:        state{},
+		config:      config,
+		created:     make(map[libcommon.Address]bool),
+		deleted:     make(map[libcommon.Address]bool),
+		mappingKeys: make(map[string][]byte),
 	}, nil
 }
 
