@@ -430,7 +430,6 @@ func (api *PrivateDebugAPIImpl) TraceCallMany(ctx context.Context, bundles []Bun
 			return err
 		}
 	}
-
 	stream.WriteArrayStart()
 	for bundle_index, bundle := range bundles {
 		stream.WriteArrayStart()
@@ -451,7 +450,10 @@ func (api *PrivateDebugAPIImpl) TraceCallMany(ctx context.Context, bundles []Bun
 			err = transactions.TraceTx(ctx, msg, blockCtx, txCtx, evm.IntraBlockState(), config, chainConfig, stream, api.evmCallTimeout)
 
 			if err != nil {
-				// stream.WriteNil()
+				stream.WriteArrayEnd()
+				stream.WriteArrayEnd()
+				stream.WriteMore()
+				stream.WriteObjectField("resultHack")
 				return err
 			}
 
