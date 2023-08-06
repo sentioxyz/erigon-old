@@ -145,6 +145,48 @@ func (db *DB) SeekFirstGTE(bucket string, key []byte, input uint32) (uint32, err
 	return value, nil
 }
 
+type DBIterator struct {
+	startKey []byte
+	initSeek bool
+	bucket   []byte
+	iter     *pebble.Iterator
+}
+
+func (it *DBIterator) Next() bool {
+	if !it.initSeek {
+		it.initSeek = true
+		return it.iter.SeekGE(it.startKey)
+	} else {
+		return it.iter.Next()
+	}
+}
+
+func (it *DBIterator) Close() error {
+	return it.iter.Close()
+}
+
+func (it *DBIterator) Key() []byte {
+	k := it.iter.Key()
+	return k[len(BucketKeyPrefix)+len(it.bucket) : len(k)-2]
+}
+
+func (it *DBIterator) MinBlock() uint64 {
+	return uint64(getHiFromRowKey(it.iter.Key())) << 16
+}
+
+func (it *DBIterator) MaxBlock() uint64 {
+	return uint64(getHiFromRowKey(it.iter.Key())+1)<<16 - 1
+}
+
+func (db *DB) NewIterator(bucket string, startKey []byte) *DBIterator {
+	iter := db.ldb.NewIter(nil)
+	return &DBIterator{
+		bucket:   []byte(bucket),
+		startKey: containerRowPrefix(bucket, startKey),
+		iter:     iter,
+	}
+}
+
 func (b *Batch) Close() error {
 	b.mutex.Lock()
 	defer b.mutex.Unlock()

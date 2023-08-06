@@ -22,14 +22,14 @@ import (
 	"github.com/ledgerwatch/erigon-lib/kv"
 )
 
-// splitCursor implements cursor with two keys
+// SplitCursor implements cursor with two keys
 // it is used to ignore incarnations in the middle
 // of composite storage key, but without
 // reconstructing the key
 // Instead, the key is split into two parts and
 // functions `Seek` and `Next` deliver both
 // parts as well as the corresponding value
-type splitCursor struct {
+type SplitCursor struct {
 	c          kv.Cursor // Unlerlying cursor
 	startkey   []byte    // Starting key (also contains bits that need to be preserved)
 	matchBytes int
@@ -39,8 +39,8 @@ type splitCursor struct {
 	part3start int // Position in the key where the third part starts
 }
 
-func NewSplitCursor(c kv.Cursor, startkey []byte, matchBits int, part1end, part2start, part3start int) *splitCursor {
-	var sc splitCursor
+func NewSplitCursor(c kv.Cursor, startkey []byte, matchBits int, part1end, part2start, part3start int) *SplitCursor {
+	var sc SplitCursor
 	sc.c = c
 	sc.startkey = startkey
 	sc.part1end = part1end
@@ -50,7 +50,7 @@ func NewSplitCursor(c kv.Cursor, startkey []byte, matchBits int, part1end, part2
 	return &sc
 }
 
-func (sc *splitCursor) matchKey(k []byte) bool {
+func (sc *SplitCursor) matchKey(k []byte) bool {
 	if k == nil {
 		return false
 	}
@@ -66,7 +66,7 @@ func (sc *splitCursor) matchKey(k []byte) bool {
 	return (k[sc.matchBytes-1] & sc.mask) == (sc.startkey[sc.matchBytes-1] & sc.mask)
 }
 
-func (sc *splitCursor) Seek() (key1, key2, key3, val []byte, err error) {
+func (sc *SplitCursor) Seek() (key1, key2, key3, val []byte, err error) {
 	k, v, err1 := sc.c.Seek(sc.startkey)
 	if err1 != nil {
 		return nil, nil, nil, nil, err1
@@ -77,7 +77,7 @@ func (sc *splitCursor) Seek() (key1, key2, key3, val []byte, err error) {
 	return k[:sc.part1end], k[sc.part2start:sc.part3start], k[sc.part3start:], v, nil
 }
 
-func (sc *splitCursor) Next() (key1, key2, key3, val []byte, err error) {
+func (sc *SplitCursor) Next() (key1, key2, key3, val []byte, err error) {
 	k, v, err1 := sc.c.Next()
 	if err1 != nil {
 		return nil, nil, nil, nil, err1

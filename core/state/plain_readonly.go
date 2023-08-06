@@ -129,7 +129,7 @@ func (s *PlainState) ForEachStorage(addr libcommon.Address, startLocation libcom
 		})
 	}
 	numDeletes := st.Len() - overrideCounter
-	if err := WalkAsOfStorage(s.tx, addr, acc.Incarnation, startLocation, s.blockNr, func(kAddr, kLoc, vs []byte) (bool, error) {
+	if err := WalkAsOfStorage(s.tx, addr, acc.Incarnation, startLocation, s.blockNr, s.bitmapDB2, func(kAddr, kLoc, vs []byte) (bool, error) {
 		if !bytes.Equal(kAddr, addr[:]) {
 			return false, nil
 		}

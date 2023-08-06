@@ -284,6 +284,7 @@ func (d *Dumper) DumpToCollector(c DumpCollector, excludeCode, excludeStorage bo
 					incarnation,
 					libcommon.Hash{}, /* startLocation */
 					d.blockNumber,
+					nil,
 					func(_, loc, vs []byte) (bool, error) {
 						account.Storage[libcommon.BytesToHash(loc).String()] = common.Bytes2Hex(vs)
 						h, _ := common.HashData(loc)
