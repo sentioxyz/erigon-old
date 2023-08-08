@@ -295,7 +295,7 @@ func WalkAsOfStorage(tx kv.Tx, address libcommon.Address, incarnation uint64, st
 		return err
 	}
 	defer hIt.Close()
-	moreHistory, err := hIt.Next()
+	hasHistory, err := hIt.Next()
 	if err != nil {
 		return err
 	}
@@ -313,17 +313,22 @@ func WalkAsOfStorage(tx kv.Tx, address libcommon.Address, incarnation uint64, st
 
 	goOn := true
 	for goOn {
+		hasMain := addr != nil && bytes.Equal(addr, address[:])
+		if !hasHistory && !hasMain {
+			// We are done.
+			break
+		}
 		cmp := -1
 		// If history has exhausted, no comparasion is needed.
-		if moreHistory {
+		if hasHistory {
 			cmp = bytes.Compare(loc, hIt.CurrentLoc())
 		}
 		shouldForwardHistory, shouldForwardMain := false, false
-		if !moreHistory || cmp < 0 {
+		if hasMain && (!hasHistory || cmp < 0) {
 			shouldForwardMain = true
 			// No more history or history does not even contain the storage key - use the latest value.
 			goOn, err = walker(addr, loc, v)
-		} else if bytes.Compare(loc, hIt.CurrentLoc()) >= 0 {
+		} else if !hasMain || bytes.Compare(loc, hIt.CurrentLoc()) >= 0 {
 			shouldForwardHistory = true
 			// History contains the current storage key, or another key that is not present in the latest state.
 			changeSetBlock, ok, err := hIt.SeekGTE(timestamp)
@@ -349,8 +354,12 @@ func WalkAsOfStorage(tx kv.Tx, address libcommon.Address, incarnation uint64, st
 				if len(data) > 0 { // Skip deleted entries
 					goOn, err = walker(hIt.CurrentAddr(), hIt.CurrentLoc(), data)
 				}
-			} else if cmp == 0 {
+				if hasMain && bytes.Equal(hIt.CurrentLoc(), loc) {
+					shouldForwardMain = true
+				}
+			} else if hasMain && cmp == 0 {
 				// No change to the value in the latest state.
+				shouldForwardMain = true
 				goOn, err = walker(addr, loc, v)
 			}
 		}
@@ -365,8 +374,8 @@ func WalkAsOfStorage(tx kv.Tx, address libcommon.Address, incarnation uint64, st
 			}
 			if shouldForwardHistory {
 				hLoc0 := hIt.CurrentLoc()
-				for moreHistory && bytes.Equal(hLoc0, hIt.CurrentLoc()) {
-					if moreHistory, err = hIt.Next(); err != nil {
+				for hasHistory && bytes.Equal(hLoc0, hIt.CurrentLoc()) {
+					if hasHistory, err = hIt.Next(); err != nil {
 						return err
 					}
 				}

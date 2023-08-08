@@ -235,7 +235,7 @@ func (tt *TestCmd) CloseStdin() {
 }
 
 func (tt *TestCmd) Kill() {
-	tt.cmd.Process.Kill()
+	tt.cmd.Process.Signal(syscall.SIGABRT)
 	if tt.Cleanup != nil {
 		tt.Cleanup()
 	}

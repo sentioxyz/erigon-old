@@ -201,7 +201,7 @@ func TestT8n(t *testing.T) {
 				qArgs = append(qArgs, arg)
 			}
 		}
-		tt.Logf("args: %v\n", strings.Join(qArgs, " "))
+		tt.Logf("test %d args: %v\n", i, strings.Join(qArgs, " "))
 		tt.Run("evm-test", args...)
 		// Compare the expected output, if provided
 		if tc.expOut != "" {
@@ -213,7 +213,7 @@ func TestT8n(t *testing.T) {
 			ok, err := cmpJson(have, want)
 			switch {
 			case err != nil:
-				t.Fatalf("test %d, json parsing failed: %v", i, err)
+				t.Fatalf("test %d, json parsing failed: %v, have: %s, want: %s", i, err, string(have), string(want))
 			case !ok:
 				t.Fatalf("test %d: output wrong, have \n%v\nwant\n%v\n", i, string(have), string(want))
 			}
