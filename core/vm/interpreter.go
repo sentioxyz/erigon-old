@@ -161,8 +161,10 @@ func NewEVMInterpreter(evm VMInterpreter, cfg Config) *EVMInterpreter {
 		jt = copyJumpTable(jt)
 		for i, op := range jt {
 			opCode := OpCode(i)
-			// do not change call costs
-			if opCode == CALL || opCode == STATICCALL || opCode == CALLCODE || opCode == DELEGATECALL {
+			// retain call costs to prevent call stack from going too deep
+			// some contracts use a loop to burn gas
+			// if all codes in the loop have zero cost, it will run forever
+			if opCode == CALL || opCode == STATICCALL || opCode == CALLCODE || opCode == DELEGATECALL || opCode == GAS {
 				continue
 			}
 			op.constantGas = 0
