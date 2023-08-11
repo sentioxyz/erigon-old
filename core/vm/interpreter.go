@@ -159,21 +159,15 @@ func NewEVMInterpreter(evm VMInterpreter, cfg Config) *EVMInterpreter {
 
 	if cfg.IgnoreGas {
 		jt = copyJumpTable(jt)
-		for _, op := range jt {
+		for i, op := range jt {
+			opCode := OpCode(i)
+			// do not change call costs
+			if opCode == CALL || opCode == STATICCALL || opCode == CALLCODE || opCode == DELEGATECALL {
+				continue
+			}
 			op.constantGas = 0
 			op.dynamicGas = func(VMInterpreter, *Contract, *stack.Stack, *Memory, uint64) (uint64, error) {
 				return 0, nil
-			}
-		}
-		callOps := []OpCode{CALL, STATICCALL, CALLCODE, DELEGATECALL}
-		for _, opCode := range callOps {
-			jt[opCode].dynamicGas = func(evm VMInterpreter, contract *Contract, stack *stack.Stack, mem *Memory, memorySize uint64) (uint64, error) {
-				callGasTemp, err := callGas(false, contract.Gas, 0, stack.Back(0))
-				if err != nil {
-					return 0, err
-				}
-				evm.SetCallGasTemp(callGasTemp)
-				return callGasTemp, nil
 			}
 		}
 	}
