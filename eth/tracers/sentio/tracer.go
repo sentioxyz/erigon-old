@@ -12,6 +12,7 @@ import (
 	"github.com/ledgerwatch/erigon/common/hexutil"
 	"github.com/ledgerwatch/erigon/common/math"
 	"github.com/ledgerwatch/erigon/core/vm"
+	"github.com/ledgerwatch/erigon/core/vm/stack"
 	"github.com/ledgerwatch/erigon/eth/tracers"
 	"github.com/ledgerwatch/log/v3"
 )
@@ -162,16 +163,9 @@ func (t *sentioTracer) CaptureEnd(output []byte, usedGas uint64, err error) {
 	t.callstack[0].Output = common.CopyBytes(output)
 
 	stackSize := len(t.callstack)
-	currentGas := uint64(t.callstack[stackSize-1].Gas) - usedGas
-	for j := stackSize - 1; j > 0; j-- {
-		t.callstack[j].Output = common.CopyBytes(output)
-		t.callstack[j].EndIndex = t.index
-		t.callstack[j].GasUsed = math.HexOrDecimal64(uint64(t.callstack[j].Gas) - currentGas)
-		t.callstack[j-1].Traces = append(t.callstack[j-1].Traces, t.callstack[j])
-	}
+	t.popStack(1, output, uint64(t.callstack[stackSize-1].Gas)-usedGas, err)
 
 	t.callstack[0].processError(output, err)
-	t.callstack = t.callstack[:1]
 }
 
 func (t *sentioTracer) CaptureEnter(typ vm.OpCode, from libcommon.Address, to libcommon.Address, precompile bool, create bool, input []byte, gas uint64, value *uint256.Int, code []byte) {
@@ -208,22 +202,37 @@ func (t *sentioTracer) CaptureExit(output []byte, usedGas uint64, err error) {
 		call := &t.callstack[i]
 		call.EndIndex = t.index
 		call.GasUsed = math.HexOrDecimal64(usedGas)
-		currentGas := uint64(call.Gas) - usedGas
 		call.processError(output, err)
 
-		for j := stackSize - 1; j >= i; j-- {
-			t.callstack[j].Output = common.CopyBytes(output)
-			t.callstack[j].EndIndex = t.index
-			t.callstack[j].GasUsed = math.HexOrDecimal64(uint64(t.callstack[j].Gas) - currentGas)
-			t.callstack[j-1].Traces = append(t.callstack[j-1].Traces, t.callstack[j])
-		}
-
-		t.callstack = t.callstack[:i]
+		t.popStack(i, output, uint64(call.Gas)-usedGas, err)
 		return
 	}
 
 	log.Error(fmt.Sprintf("failed to pop stack"))
 
+}
+
+func (t *sentioTracer) popStack(to int, output []byte, currentGas uint64, err error) { // , scope *vm.ScopeContext
+	stackSize := len(t.callstack)
+	for j := stackSize - 1; j >= to; j-- {
+		t.callstack[j].Output = common.CopyBytes(output)
+		t.callstack[j].EndIndex = t.index
+		t.callstack[j].GasUsed = math.HexOrDecimal64(uint64(t.callstack[j].Gas) - currentGas)
+
+		// TODO consider pass scopeContext so that popStack also record this
+		//if t.callstack[j].function != nil {
+		//	t.callstack[j].OutputStack = copyStack(scope.Stack, t.callstack[j].function.OutputSize)
+		//	if t.callstack[j].function.OutputMemory {
+		//		t.callstack[j].OutputMemory = formatMemory(scope.Memory)
+		//	}
+		//}
+		//if err != nil {
+		//	t.callstack[j].Error = err.Error()
+		//}
+		t.callstack[j-1].Traces = append(t.callstack[j-1].Traces, t.callstack[j])
+	}
+
+	t.callstack = t.callstack[:to]
 }
 
 func (t *sentioTracer) CaptureState(pc uint64, op vm.OpCode, gas, cost uint64, scope *vm.ScopeContext, rData []byte, depth int, err error) {
@@ -254,51 +263,24 @@ func (t *sentioTracer) CaptureState(pc uint64, op vm.OpCode, gas, cost uint64, s
 		return trace
 	}
 
-	var copyMemory = func(offset *uint256.Int, size *uint256.Int) hexutil.Bytes {
-		// it's important to get copy
-		return scope.Memory.GetCopy(int64(offset.Uint64()), int64(size.Uint64()))
-	}
-
-	var copyStack = func(copySize int) []uint256.Int {
-		if copySize == 0 {
-			return nil
-		}
-		stackSize := scope.Stack.Len()
-		stack := make([]uint256.Int, stackSize)
-		for i := stackSize - copySize; i < stackSize; i++ {
-			stack[i] = scope.Stack.Data[i]
-		}
-		return stack
-	}
-
-	var formatMemory = func() *[]string {
-		memory := make([]string, 0, (scope.Memory.Len()+31)/32)
-		for i := 0; i+32 <= scope.Memory.Len(); i += 32 {
-			memory = append(memory, fmt.Sprintf("%x", scope.Memory.GetPtr(int64(i), 32)))
-		}
-		return &memory
-	}
-
 	switch op {
 	case vm.CREATE, vm.CREATE2, vm.CALL, vm.CALLCODE, vm.DELEGATECALL, vm.STATICCALL, vm.SELFDESTRUCT:
 		// more info to be add at CaptureEnter
-		call := mergeBase(Trace{
-			Type: op.String(),
-		})
+		call := mergeBase(Trace{})
 		t.callstack = append(t.callstack, call)
 	case vm.LOG0, vm.LOG1, vm.LOG2, vm.LOG3, vm.LOG4:
 		topicCount := int(op - vm.LOG0)
 		logOffset := scope.Stack.Peek()
 		logSize := scope.Stack.Back(1)
-		data := copyMemory(logOffset, logSize)
+		data := copyMemory(scope.Memory, logOffset, logSize)
 		var topics []libcommon.Hash
 		//stackLen := scope.Stack.Len()
 		for i := 0; i < topicCount; i++ {
 			topics = append(topics, scope.Stack.Back(2+i).Bytes32())
 		}
-		addr := scope.Contract.Address()
+		addr := scope.Contract.CodeAddr
 		l := mergeBase(Trace{
-			Address: &addr,
+			Address: addr,
 			Data:    data,
 			Topics:  topics,
 		})
@@ -331,6 +313,9 @@ func (t *sentioTracer) CaptureState(pc uint64, op vm.OpCode, gas, cost uint64, s
 		fromStr := from.String()
 
 		if t.previousJump != nil { // vm.JumpDest and match with a previous jump (otherwise it's a jumpi)
+			defer func() {
+				t.previousJump = nil
+			}()
 			// Check if this is return
 			// TODO pontentially maintain a map for fast filtering
 			//log.Info("fromStr" + fromStr + ", callstack size" + fmt.Sprint(len(t.callStack)))
@@ -361,9 +346,9 @@ func (t *sentioTracer) CaptureState(pc uint64, op vm.OpCode, gas, cost uint64, s
 					for j := stackSize - 1; j >= i; j-- {
 						t.callstack[j].EndIndex = t.index - 1 // EndIndex should before the jumpdest
 						t.callstack[j].GasUsed = math.HexOrDecimal64(uint64(t.callstack[j].Gas) - gas)
-						t.callstack[j].OutputStack = copyStack(t.callstack[j].function.OutputSize)
-						if functionInfo.OutputMemory {
-							t.callstack[j].OutputMemory = formatMemory()
+						t.callstack[j].OutputStack = copyStack(scope.Stack, t.callstack[j].function.OutputSize)
+						if t.callstack[j].function.OutputMemory {
+							t.callstack[j].OutputMemory = formatMemory(scope.Memory)
 						}
 						if err != nil {
 							t.callstack[j].Error = err.Error()
@@ -371,7 +356,6 @@ func (t *sentioTracer) CaptureState(pc uint64, op vm.OpCode, gas, cost uint64, s
 						t.callstack[j-1].Traces = append(t.callstack[j-1].Traces, t.callstack[j])
 					}
 					t.callstack = t.callstack[:i]
-					t.previousJump = nil
 					return
 				}
 			}
@@ -383,15 +367,13 @@ func (t *sentioTracer) CaptureState(pc uint64, op vm.OpCode, gas, cost uint64, s
 			if funcInfo != nil {
 				// filter those jump are not call site
 				if !t.isCall(t.previousJump.From.String(), t.previousJump.Pc) {
-					t.previousJump = nil
 					return
 				}
 
 				if funcInfo.InputSize >= scope.Stack.Len() {
 					// TODO this check should not needed after frist check
-					log.Error("Unexpected stack size" + "function:" + fmt.Sprint(funcInfo) + ", stack" + fmt.Sprint(scope.Stack.Data))
+					log.Error("Unexpected stack size for function:" + fmt.Sprint(funcInfo) + ", stack" + fmt.Sprint(scope.Stack.Data))
 					log.Error("previous jump" + fmt.Sprint(*t.previousJump))
-					t.previousJump = nil
 					return
 				}
 
@@ -405,19 +387,16 @@ func (t *sentioTracer) CaptureState(pc uint64, op vm.OpCode, gas, cost uint64, s
 				t.previousJump.exitPc = scope.Stack.Back(funcInfo.InputSize).Uint64()
 				t.previousJump.function = funcInfo
 				t.previousJump.FunctionPc = pc
-				t.previousJump.InputStack = copyStack(funcInfo.InputSize)
+				t.previousJump.InputStack = copyStack(scope.Stack, funcInfo.InputSize)
 				if t.config.Debug {
 					t.previousJump.Name = funcInfo.Name
 				}
 				if funcInfo.InputMemory {
-					t.previousJump.InputMemory = formatMemory()
+					t.previousJump.InputMemory = formatMemory(scope.Memory)
 				}
 				t.callstack = append(t.callstack, *t.previousJump)
 				//t.callstack = append(t.callstack, callStack{
 			}
-
-			// reset previous jump regardless
-			t.previousJump = nil
 		}
 	case vm.REVERT:
 		if !t.config.WithInternalCalls {
@@ -567,4 +546,29 @@ func (f *Trace) processError(output []byte, err error) {
 	if unpacked, err := abi.UnpackRevert(output); err == nil {
 		f.Revertal = unpacked
 	}
+}
+
+func copyMemory(m *vm.Memory, offset *uint256.Int, size *uint256.Int) hexutil.Bytes {
+	// it's important to get copy
+	return m.GetCopy(int64(offset.Uint64()), int64(size.Uint64()))
+}
+
+func formatMemory(m *vm.Memory) *[]string {
+	res := make([]string, 0, (m.Len()+31)/32)
+	for i := 0; i+32 <= m.Len(); i += 32 {
+		res = append(res, fmt.Sprintf("%x", m.GetPtr(int64(i), 32)))
+	}
+	return &res
+}
+
+func copyStack(s *stack.Stack, copySize int) []uint256.Int {
+	if copySize == 0 {
+		return nil
+	}
+	stackSize := s.Len()
+	res := make([]uint256.Int, stackSize)
+	for i := stackSize - copySize; i < stackSize; i++ {
+		res[i] = s.Data[i]
+	}
+	return res
 }
