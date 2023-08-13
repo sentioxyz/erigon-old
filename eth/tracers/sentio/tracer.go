@@ -54,8 +54,6 @@ type Trace struct {
 	Gas math.HexOrDecimal64 `json:"gas"`
 	// Gas for the entire call
 	GasUsed math.HexOrDecimal64 `json:"gasUsed"`
-	// Gas cost for the OP, just help the computation
-	gasCost uint64
 
 	From *libcommon.Address `json:"from,omitempty"`
 	// Used by call
@@ -250,7 +248,6 @@ func (t *sentioTracer) CaptureState(pc uint64, op vm.OpCode, gas, cost uint64, s
 		trace.Pc = pc
 		trace.Type = op.String()
 		trace.Gas = math.HexOrDecimal64(gas)
-		trace.gasCost = cost
 		trace.StartIndex = t.index - 1
 		trace.EndIndex = t.index
 
@@ -278,9 +275,9 @@ func (t *sentioTracer) CaptureState(pc uint64, op vm.OpCode, gas, cost uint64, s
 		for i := 0; i < topicCount; i++ {
 			topics = append(topics, scope.Stack.Back(2+i).Bytes32())
 		}
-		addr := scope.Contract.CodeAddr
+		addr := scope.Contract.Address()
 		l := mergeBase(Trace{
-			Address: addr,
+			Address: &addr,
 			Data:    data,
 			Topics:  topics,
 		})
