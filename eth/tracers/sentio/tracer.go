@@ -344,16 +344,25 @@ func (t *sentioTracer) CaptureState(pc uint64, op vm.OpCode, gas, cost uint64, s
 
 					// TODO maybe don't need return all
 					for j := stackSize - 1; j >= i; j-- {
-						t.callstack[j].EndIndex = t.index - 1 // EndIndex should before the jumpdest
-						t.callstack[j].GasUsed = math.HexOrDecimal64(uint64(t.callstack[j].Gas) - gas)
-						t.callstack[j].OutputStack = copyStack(scope.Stack, t.callstack[j].function.OutputSize)
-						if t.callstack[j].function.OutputMemory {
-							t.callstack[j].OutputMemory = formatMemory(scope.Memory)
+						call := &t.callstack[j]
+						call.EndIndex = t.index - 1 // EndIndex should before the jumpdest
+						call.GasUsed = math.HexOrDecimal64(uint64(t.callstack[j].Gas) - gas)
+						if call.function.OutputSize > scope.Stack.Len() {
+							log.Error(fmt.Sprintf("stack size not enough (%d vs %d) for function %s %s. pc: %d",
+								scope.Stack.Len(), call.function.OutputSize, call.function.address, call.function.Name, pc))
+							if err == nil {
+								log.Error("stack size not enough has error", "err", err)
+							}
+						} else {
+							call.OutputStack = copyStack(scope.Stack, t.callstack[j].function.OutputSize)
+						}
+						if call.function.OutputMemory {
+							call.OutputMemory = formatMemory(scope.Memory)
 						}
 						if err != nil {
-							t.callstack[j].Error = err.Error()
+							call.Error = err.Error()
 						}
-						t.callstack[j-1].Traces = append(t.callstack[j-1].Traces, t.callstack[j])
+						t.callstack[j-1].Traces = append(t.callstack[j-1].Traces, *call)
 					}
 					t.callstack = t.callstack[:i]
 					return
