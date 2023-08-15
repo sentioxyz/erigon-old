@@ -182,6 +182,7 @@ func TraceTx(
 	}
 	if config != nil {
 		vmConfig.CreationCodeOverrides = config.CreationCodeOverrides
+		vmConfig.CreateAddressOverride = config.CreateAddressOverride
 		if config.IgnoreGas != nil {
 			vmConfig.IgnoreGas = *config.IgnoreGas
 		}
