@@ -341,14 +341,17 @@ func (evm *EVM) create(caller ContractRef, codeAndHash *codeAndHash, gas uint64,
 	var err error
 	var gasConsumption uint64
 
-	isOverridden := false
+	isCodeOverridden := false
 	if evm.config.CreationCodeOverrides != nil {
 		if code, ok := evm.config.CreationCodeOverrides[address]; ok {
-			isOverridden = true
+			isCodeOverridden = true
 			codeAndHash.code = code
 			codeAndHash.hash = libcommon.Hash{}
 			_ = codeAndHash.Hash()
 		}
+	}
+	if evm.config.CreateAddressOverride != nil {
+		address = *evm.config.CreateAddressOverride
 	}
 
 	if evm.config.Debug {
@@ -388,12 +391,16 @@ func (evm *EVM) create(caller ContractRef, codeAndHash *codeAndHash, gas uint64,
 	if evm.chainRules.IsBerlin {
 		evm.intraBlockState.AddAddressToAccessList(address)
 	}
-	// Ensure there's no existing contract already at the designated address
-	contractHash := evm.intraBlockState.GetCodeHash(address)
-	if evm.intraBlockState.GetNonce(address) != 0 || (contractHash != (libcommon.Hash{}) && contractHash != emptyCodeHash) {
-		err = ErrContractAddressCollision
-		return nil, libcommon.Address{}, 0, err
+
+	if evm.config.CreateAddressOverride == nil {
+		// Ensure there's no existing contract already at the designated address
+		contractHash := evm.intraBlockState.GetCodeHash(address)
+		if evm.intraBlockState.GetNonce(address) != 0 || (contractHash != (libcommon.Hash{}) && contractHash != emptyCodeHash) {
+			err = ErrContractAddressCollision
+			return nil, libcommon.Address{}, 0, err
+		}
 	}
+
 	// Create a new account on the state
 	snapshot := evm.intraBlockState.Snapshot()
 	evm.intraBlockState.CreateAccount(address, true)
@@ -415,7 +422,7 @@ func (evm *EVM) create(caller ContractRef, codeAndHash *codeAndHash, gas uint64,
 
 	// EIP-170: Contract code size limit
 	// hack: skip the check if we are overriding creation code
-	if err == nil && !isOverridden && evm.chainRules.IsSpuriousDragon && len(ret) > params.MaxCodeSize {
+	if err == nil && !isCodeOverridden && evm.chainRules.IsSpuriousDragon && len(ret) > params.MaxCodeSize {
 		// Gnosis Chain prior to Shanghai didn't have EIP-170 enabled,
 		// but EIP-3860 (part of Shanghai) requires EIP-170.
 		if !evm.chainRules.IsAura || evm.config.HasEip3860(evm.chainRules) {

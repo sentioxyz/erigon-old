@@ -44,6 +44,7 @@ type Config struct {
 	ExtraEips []int // Additional EIPS that are to be enabled
 
 	CreationCodeOverrides map[libcommon.Address]hexutil.Bytes
+	CreateAddressOverride *libcommon.Address
 	IgnoreGas             bool
 }
 

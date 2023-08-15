@@ -21,4 +21,5 @@ type TraceConfig struct {
 	GasOverride           *hexutil.Big
 	IgnoreGas             *bool
 	CreationCodeOverrides map[libcommon.Address]hexutil.Bytes
+	CreateAddressOverride *libcommon.Address
 }
