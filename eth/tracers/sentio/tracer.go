@@ -75,8 +75,9 @@ type Trace struct {
 	FunctionPc   uint64        `json:"functionPc,omitempty"`
 
 	// Used by log
-	Address *libcommon.Address `json:"address,omitempty"`
-	Data    hexutil.Bytes      `json:"data,omitempty"`
+	Address     *libcommon.Address `json:"address,omitempty"`
+	CodeAddress *libcommon.Address `json:"codeAddress,omitempty"`
+	Data        hexutil.Bytes      `json:"data,omitempty"`
 
 	Topics []libcommon.Hash `json:"topics,omitempty"`
 
@@ -292,9 +293,10 @@ func (t *sentioTracer) CaptureState(pc uint64, op vm.OpCode, gas, cost uint64, s
 		}
 		addr := scope.Contract.Address()
 		l := mergeBase(Trace{
-			Address: &addr,
-			Data:    data,
-			Topics:  topics,
+			Address:     &addr,
+			CodeAddress: scope.Contract.CodeAddr,
+			Data:        data,
+			Topics:      topics,
 		})
 		t.callstack[len(t.callstack)-1].Traces = append(t.callstack[len(t.callstack)-1].Traces, l)
 	case vm.JUMP:
