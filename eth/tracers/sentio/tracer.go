@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync/atomic"
 
 	"github.com/holiman/uint256"
 	libcommon "github.com/ledgerwatch/erigon-lib/common"
@@ -108,6 +109,9 @@ type sentioTracer struct {
 
 	callstack []Trace
 	gasLimit  uint64
+
+	interrupt uint32 // Atomic flag to signal execution interruption
+	reason    error  // Textual reason for the interruption
 }
 
 func (t *sentioTracer) CaptureTxStart(gasLimit uint64) {
@@ -168,6 +172,10 @@ func (t *sentioTracer) CaptureEnd(output []byte, usedGas uint64, err error) {
 }
 
 func (t *sentioTracer) CaptureEnter(typ vm.OpCode, from libcommon.Address, to libcommon.Address, precompile bool, create bool, input []byte, gas uint64, value *uint256.Int, code []byte) {
+	// Skip if tracing was interrupted
+	if atomic.LoadUint32(&t.interrupt) > 0 {
+		return
+	}
 	size := len(t.callstack)
 
 	t.callstack[size-1].From = &from
@@ -234,6 +242,10 @@ func (t *sentioTracer) popStack(to int, output []byte, currentGas uint64, err er
 }
 
 func (t *sentioTracer) CaptureState(pc uint64, op vm.OpCode, gas, cost uint64, scope *vm.ScopeContext, rData []byte, depth int, err error) {
+	// Skip if tracing was interrupted
+	if atomic.LoadUint32(&t.interrupt) > 0 {
+		return
+	}
 	t.index++
 
 	if t.callstack[0].StartIndex == -1 && t.entryPc[pc] {
@@ -464,11 +476,16 @@ func (t *sentioTracer) GetResult() (json.RawMessage, error) {
 		log.Error("callstack length is not 1, is " + fmt.Sprint(len(t.callstack)))
 	}
 
-	return json.Marshal(t.callstack[0])
+	res, err := json.Marshal(t.callstack[0])
+	if err != nil {
+		return nil, err
+	}
+	return res, t.reason
 }
 
 func (t *sentioTracer) Stop(err error) {
-
+	t.reason = err
+	atomic.StoreUint32(&t.interrupt, 1)
 }
 
 func newSentioTracer(name string, ctx *tracers.Context, cfg json.RawMessage) (tracers.Tracer, error) {
