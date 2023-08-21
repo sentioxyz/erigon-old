@@ -46,6 +46,7 @@ type account struct {
 	Nonce       uint64                            `json:"nonce,omitempty"`
 	Storage     map[libcommon.Hash]libcommon.Hash `json:"storage,omitempty"`
 	CodeAddress *libcommon.Address                `json:"codeAddress,omitempty"`
+	MappingKeys map[string]string                 `json:"mappingKeys,omitempty"`
 }
 
 func (a *account) exists() bool {
@@ -166,6 +167,7 @@ func (t *sentioPrestateTracer) CaptureState(pc uint64, op vm.OpCode, gas, cost u
 		if len(rawkey) == 64 {
 			// only cares 64 bytes for mapping key
 			hashOfKey := crypto.Keccak256(rawkey)
+			t.pre[caller].MappingKeys[common.Bytes2Hex(rawkey)] = "0x" + common.Bytes2Hex(hashOfKey)
 			t.mappingKeys[common.Bytes2Hex(rawkey)] = "0x" + common.Bytes2Hex(hashOfKey)
 		}
 	case stackLen >= 1 && (op == vm.SLOAD || op == vm.SSTORE):
@@ -218,6 +220,7 @@ func (t *sentioPrestateTracer) CaptureTxEnd(restGas uint64) {
 		newNonce := t.env.IntraBlockState().GetNonce(addr)
 		newCode := t.env.IntraBlockState().GetCode(addr)
 		postAccount.CodeAddress = state.CodeAddress
+		postAccount.MappingKeys = state.MappingKeys
 
 		if newBalance.Cmp(t.pre[addr].Balance) != 0 {
 			modified = true
@@ -304,10 +307,11 @@ func (t *sentioPrestateTracer) lookupAccount(addr libcommon.Address) {
 	}
 
 	t.pre[addr] = &account{
-		Balance: t.env.IntraBlockState().GetBalance(addr).ToBig(),
-		Nonce:   t.env.IntraBlockState().GetNonce(addr),
-		Code:    t.env.IntraBlockState().GetCode(addr),
-		Storage: make(map[libcommon.Hash]libcommon.Hash),
+		Balance:     t.env.IntraBlockState().GetBalance(addr).ToBig(),
+		Nonce:       t.env.IntraBlockState().GetNonce(addr),
+		Code:        t.env.IntraBlockState().GetCode(addr),
+		Storage:     make(map[libcommon.Hash]libcommon.Hash),
+		MappingKeys: make(map[string]string),
 	}
 }
 
