@@ -59,18 +59,17 @@ type accountMarshaling struct {
 }
 
 type sentioPrestateTracer struct {
-	env         vm.VMInterface
-	pre         state
-	post        state
-	create      bool
-	to          libcommon.Address
-	gasLimit    uint64 // Amount of gas bought for the whole tx
-	config      prestateTracerConfig
-	interrupt   uint32 // Atomic flag to signal execution interruption
-	reason      error  // Textual reason for the interruption
-	created     map[libcommon.Address]bool
-	deleted     map[libcommon.Address]bool
-	mappingKeys map[string]string
+	env       vm.VMInterface
+	pre       state
+	post      state
+	create    bool
+	to        libcommon.Address
+	gasLimit  uint64 // Amount of gas bought for the whole tx
+	config    prestateTracerConfig
+	interrupt uint32 // Atomic flag to signal execution interruption
+	reason    error  // Textual reason for the interruption
+	created   map[libcommon.Address]bool
+	deleted   map[libcommon.Address]bool
 }
 
 func (t *sentioPrestateTracer) CaptureEnter(typ vm.OpCode, from libcommon.Address, to libcommon.Address, precompile bool, create bool, input []byte, gas uint64, value *uint256.Int, code []byte) {
@@ -101,12 +100,11 @@ func newSentioPrestateTracer(name string, ctx *tracers.Context, cfg json.RawMess
 		}
 	}
 	return &sentioPrestateTracer{
-		pre:         state{},
-		post:        state{},
-		config:      config,
-		created:     make(map[libcommon.Address]bool),
-		deleted:     make(map[libcommon.Address]bool),
-		mappingKeys: make(map[string]string),
+		pre:     state{},
+		post:    state{},
+		config:  config,
+		created: make(map[libcommon.Address]bool),
+		deleted: make(map[libcommon.Address]bool),
 	}, nil
 }
 
@@ -168,7 +166,6 @@ func (t *sentioPrestateTracer) CaptureState(pc uint64, op vm.OpCode, gas, cost u
 			// only cares 64 bytes for mapping key
 			hashOfKey := crypto.Keccak256(rawkey)
 			t.pre[caller].MappingKeys[common.Bytes2Hex(rawkey)] = "0x" + common.Bytes2Hex(hashOfKey)
-			t.mappingKeys[common.Bytes2Hex(rawkey)] = "0x" + common.Bytes2Hex(hashOfKey)
 		}
 	case stackLen >= 1 && (op == vm.SLOAD || op == vm.SSTORE):
 		slot := libcommon.Hash(stackData[stackLen-1].Bytes32())
@@ -277,15 +274,13 @@ func (t *sentioPrestateTracer) GetResult() (json.RawMessage, error) {
 	var err error
 	if t.config.DiffMode {
 		res, err = json.Marshal(struct {
-			Post        state             `json:"post"`
-			Pre         state             `json:"pre"`
-			MappingKeys map[string]string `json:"mappingKeys"`
-		}{t.post, t.pre, t.mappingKeys})
+			Post state `json:"post"`
+			Pre  state `json:"pre"`
+		}{t.post, t.pre})
 	} else {
 		res, err = json.Marshal(struct {
-			Pre         state             `json:"pre"`
-			MappingKeys map[string]string `json:"mappingKeys"`
-		}{t.pre, t.mappingKeys})
+			Pre state `json:"pre"`
+		}{t.pre})
 	}
 	if err != nil {
 		return nil, err
