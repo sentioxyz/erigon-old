@@ -159,10 +159,11 @@ func (t *sentioPrestateTracer) CaptureState(pc uint64, op vm.OpCode, gas, cost u
 	caller := scope.Contract.Address()
 	switch {
 	case stackLen >= 2 && op == vm.KECCAK256:
-		offset := stackData[stackLen-1]
 		size := stackData[stackLen-2]
-		rawkey := scope.Memory.GetCopy(int64(offset.Uint64()), int64(size.Uint64()))
-		if len(rawkey) == 64 {
+		if size.Uint64() == 64 {
+			offset := stackData[stackLen-1]
+			rawkey := scope.Memory.GetCopy(int64(offset.Uint64()), int64(size.Uint64()))
+
 			// only cares 64 bytes for mapping key
 			hashOfKey := crypto.Keccak256(rawkey)
 			t.pre[caller].MappingKeys[common.Bytes2Hex(rawkey)] = "0x" + common.Bytes2Hex(hashOfKey)
