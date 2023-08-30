@@ -154,6 +154,9 @@ func (d *db2Iter) Next() (bool, error) {
 		if !d.it.Next() {
 			return false, nil
 		}
+		if !bytes.Equal(d.it.Key()[:length.Addr], d.startAddress[:]) {
+			return false, nil
+		}
 	}
 	return true, nil
 }
