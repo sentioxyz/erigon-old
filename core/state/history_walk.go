@@ -328,7 +328,7 @@ func WalkAsOfStorage(tx kv.Tx, address libcommon.Address, incarnation uint64, st
 			shouldForwardMain = true
 			// No more history or history does not even contain the storage key - use the latest value.
 			goOn, err = walker(addr, loc, v)
-		} else if !hasMain || bytes.Compare(loc, hIt.CurrentLoc()) >= 0 {
+		} else if hasHistory && (!hasMain || bytes.Compare(loc, hIt.CurrentLoc()) >= 0) {
 			shouldForwardHistory = true
 			// History contains the current storage key, or another key that is not present in the latest state.
 			changeSetBlock, ok, err := hIt.SeekGTE(timestamp)
