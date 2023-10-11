@@ -46,6 +46,7 @@ type Config struct {
 	CreationCodeOverrides map[libcommon.Address]hexutil.Bytes
 	CreateAddressOverride *libcommon.Address
 	IgnoreGas             bool
+	IgnoreCodeSizeLimit   bool
 }
 
 func (vmConfig *Config) HasEip3860(rules *chain.Rules) bool {
