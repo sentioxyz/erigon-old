@@ -20,6 +20,7 @@ type TraceConfig struct {
 	StateOverrides        *ethapi.StateOverrides
 	GasOverride           *hexutil.Big
 	IgnoreGas             *bool
+	IgnoreCodeSizeLimit   *bool
 	CreationCodeOverrides map[libcommon.Address]hexutil.Bytes
 	CreateAddressOverride *libcommon.Address
 }
