@@ -3,9 +3,10 @@ package jsonrpc
 import (
 	"context"
 	"fmt"
-	"github.com/ledgerwatch/erigon-lib/common/hexutil"
 	"math/big"
 	"time"
+
+	"github.com/ledgerwatch/erigon-lib/common/hexutil"
 
 	"github.com/holiman/uint256"
 	jsoniter "github.com/json-iterator/go"
@@ -250,6 +251,13 @@ func (api *PrivateDebugAPIImpl) TraceTransaction(ctx context.Context, hash commo
 		stream.WriteNil()
 		return err
 	}
+
+	if config != nil && config.StateOverrides != nil {
+		if err := config.StateOverrides.Override(ibs); err != nil {
+			return fmt.Errorf("override state: %v", err)
+		}
+	}
+
 	// Trace the transaction and return
 	return transactions.TraceTx(ctx, msg, blockCtx, txCtx, ibs, config, chainConfig, stream, api.evmCallTimeout)
 }
