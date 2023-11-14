@@ -3,6 +3,7 @@ package node
 
 import (
 	"github.com/ledgerwatch/erigon-lib/kv"
+	"github.com/ledgerwatch/erigon/mev-lib"
 	"github.com/ledgerwatch/log/v3"
 	"github.com/urfave/cli/v2"
 
@@ -21,6 +22,10 @@ import (
 type ErigonNode struct {
 	stack   *node.Node
 	backend *eth.Ethereum
+}
+
+func (e *ErigonNode) Backend() *eth.Ethereum {
+	return e.backend
 }
 
 // Serve runs the node and blocks the execution. It returns when the node is existed.
@@ -95,6 +100,17 @@ func NewEthConfigUrfave(ctx *cli.Context, nodeConfig *nodecfg.Config) *ethconfig
 	return ethConfig
 }
 
+func NewMEVFlagUrfave(ctx *cli.Context) *mev.MEVFlag {
+	mevFlag := mev.MEVFlagDefault()
+	if ctx.IsSet(utils.EnableMEVInfra.Name) {
+		mevFlag.Enable = ctx.Bool(utils.EnableMEVInfra.Name)
+	}
+	if ctx.IsSet(utils.MEVInfraConfigPath.Name) {
+		mevFlag.ConfigPath = ctx.String(utils.MEVInfraConfigPath.Name)
+	}
+	return mevFlag
+}
+
 // New creates a new `ErigonNode`.
 // * ctx - `*cli.Context` from the main function. Necessary to be able to configure the node based on the command-line flags
 // * sync - `stagedsync.StagedSync`, an instance of staged sync, setup just as needed.
@@ -104,7 +120,7 @@ func New(
 	ethConfig *ethconfig.Config,
 	logger log.Logger,
 ) (*ErigonNode, error) {
-	//prepareBuckets(optionalParams.CustomBuckets)
+	// prepareBuckets(optionalParams.CustomBuckets)
 	node, err := node.New(nodeConfig)
 	if err != nil {
 		utils.Fatalf("Failed to create Erigon node: %v", err)

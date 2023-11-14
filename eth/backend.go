@@ -118,8 +118,9 @@ type Config = ethconfig.Config
 
 // Ethereum implements the Ethereum full node service.
 type Ethereum struct {
-	config *ethconfig.Config
-	log    log.Logger
+	config  *ethconfig.Config
+	log     log.Logger
+	apiList []rpc.API
 
 	// DB interfaces
 	chainDB    kv.RwDB
@@ -491,11 +492,11 @@ func New(stack *node.Node, config *ethconfig.Config, logger log.Logger) (*Ethere
 	if config.DeprecatedTxPool.Disable {
 		backend.txPool2GrpcServer = &txpool2.GrpcDisabled{}
 	} else {
-		//cacheConfig := kvcache.DefaultCoherentCacheConfig
-		//cacheConfig.MetricsLabel = "txpool"
+		// cacheConfig := kvcache.DefaultCoherentCacheConfig
+		// cacheConfig.MetricsLabel = "txpool"
 
 		backend.newTxs2 = make(chan types2.Announcements, 1024)
-		//defer close(newTxs)
+		// defer close(newTxs)
 		backend.txPool2DB, backend.txPool2, backend.txPool2Fetch, backend.txPool2Send, backend.txPool2GrpcServer, err = txpooluitl.AllComponents(
 			ctx, config.TxPool, kvcache.NewDummy(), backend.newTxs2, backend.chainDB, backend.sentriesClient.Sentries(), stateDiffClient,
 		)
@@ -661,9 +662,9 @@ func New(stack *node.Node, config *ethconfig.Config, logger log.Logger) (*Ethere
 				}
 				backend.sentriesClient.Bd.AddToPrefetch(b.Header(), b.RawBody())
 
-				//p2p
-				//backend.sentriesClient.BroadcastNewBlock(context.Background(), b, b.Difficulty())
-				//rpcdaemon
+				// p2p
+				// backend.sentriesClient.BroadcastNewBlock(context.Background(), b, b.Difficulty())
+				// rpcdaemon
 				if err := miningRPC.(*privateapi.MiningServer).BroadcastMinedBlock(b); err != nil {
 					log.Error("txpool rpc mined block broadcast", "err", err)
 				}
@@ -725,12 +726,12 @@ func (backend *Ethereum) Init(stack *node.Node, config *ethconfig.Config) error 
 		}
 	}
 
-	//eth.APIBackend = &EthAPIBackend{stack.Config().ExtRPCEnabled(), stack.Config().AllowUnprotectedTxs, eth, nil}
+	// eth.APIBackend = &EthAPIBackend{stack.Config().ExtRPCEnabled(), stack.Config().AllowUnprotectedTxs, eth, nil}
 	gpoParams := config.GPO
 	if gpoParams.Default == nil {
 		gpoParams.Default = config.Miner.GasPrice
 	}
-	//eth.APIBackend.gpo = gasprice.NewOracle(eth.APIBackend, gpoParams)
+	// eth.APIBackend.gpo = gasprice.NewOracle(eth.APIBackend, gpoParams)
 	if config.Ethstats != "" {
 		var headCh chan [][]byte
 		headCh, backend.unsubscribeEthstat = backend.notifications.Events.AddHeaderSubscription()
@@ -749,10 +750,11 @@ func (backend *Ethereum) Init(stack *node.Node, config *ethconfig.Config) error 
 	if casted, ok := backend.engine.(*bor.Bor); ok {
 		borDb = casted.DB
 	}
-	apiList := commands.APIList(chainKv, borDb, ethRpcClient, txPoolRpcClient, miningRpcClient, ff, stateCache, blockReader, backend.agg, httpRpcCfg, backend.engine, backend.bitmapDB2)
+	backend.apiList = commands.APIList(chainKv, borDb, ethRpcClient, txPoolRpcClient, miningRpcClient, ff, stateCache, blockReader,
+		backend.agg, httpRpcCfg, backend.engine, backend.bitmapDB2)
 	authApiList := commands.AuthAPIList(chainKv, ethRpcClient, txPoolRpcClient, miningRpcClient, ff, stateCache, blockReader, backend.agg, httpRpcCfg, backend.engine, backend.bitmapDB2)
 	go func() {
-		if err := cli.StartRpcServer(ctx, httpRpcCfg, apiList, authApiList); err != nil {
+		if err := cli.StartRpcServer(ctx, httpRpcCfg, backend.apiList, authApiList); err != nil {
 			log.Error(err.Error())
 			return
 		}
@@ -764,7 +766,7 @@ func (backend *Ethereum) Init(stack *node.Node, config *ethconfig.Config) error 
 }
 
 func (s *Ethereum) APIs() []rpc.API {
-	return []rpc.API{}
+	return s.apiList
 }
 
 func (s *Ethereum) Etherbase() (eb libcommon.Address, err error) {
@@ -1166,4 +1168,12 @@ func checkPortIsFree(addr string) (free bool) {
 	}
 	c.Close()
 	return false
+}
+
+func (s *Ethereum) Engine() consensus.Engine {
+	return s.engine
+}
+
+func (s *Ethereum) BlockIO() services.FullBlockReader {
+	return s.blockReader
 }
