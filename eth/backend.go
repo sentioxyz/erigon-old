@@ -1177,3 +1177,7 @@ func (s *Ethereum) Engine() consensus.Engine {
 func (s *Ethereum) BlockIO() services.FullBlockReader {
 	return s.blockReader
 }
+
+func (s *Ethereum) BitmapDB() *bitmapdb2.DB {
+	return s.bitmapDB2
+}

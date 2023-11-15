@@ -7,9 +7,11 @@ import (
 	"math/big"
 	"time"
 
+	"github.com/ledgerwatch/erigon-lib/kv"
 	"github.com/ledgerwatch/erigon/core/state"
 	"github.com/ledgerwatch/erigon/core/types"
 	"github.com/ledgerwatch/erigon/rpc"
+	"github.com/ledgerwatch/erigon/turbo/rpchelper"
 )
 
 type simulateEnv struct {
@@ -18,6 +20,20 @@ type simulateEnv struct {
 	statedb *state.IntraBlockState
 	tracer  *SimulateTracer
 	ec      SimulateContext
+}
+
+func (s *InfraServer) StateDBAtBlock(tx kv.Tx,
+	block *types.Block,
+) (*state.IntraBlockState, error) {
+	stateReader, err := rpchelper.CreateHistoryStateReader(
+		tx, block.NumberU64(),
+		0, false,
+		s.eth.ChainConfig().ChainName,
+		s.eth.BitmapDB())
+	if err != nil {
+		return nil, err
+	}
+	return state.New(stateReader), nil
 }
 
 func (s *InfraServer) withSimulateEnv(ctx context.Context,
@@ -39,9 +55,14 @@ func (s *InfraServer) withSimulateEnv(ctx context.Context,
 	if block == nil {
 		return errors.New("block re-org detected")
 	}
+	statedb, err := s.StateDBAtBlock(tx, block)
+	if err != nil {
+		return errors.New("failed to create state db")
+	}
 	env := &simulateEnv{
-		tracer: tracer,
-		block:  block,
+		tracer:  tracer,
+		block:   block,
+		statedb: statedb,
 		header: &types.Header{
 			ParentHash: block.Hash(),
 			Number:     new(big.Int).Add(block.Number(), big.NewInt(1)),

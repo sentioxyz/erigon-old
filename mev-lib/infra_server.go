@@ -27,7 +27,6 @@ import (
 
 const (
 	ABITypeGeth = "geth"
-	ABITypeEVMC = "evmc"
 )
 
 var (
@@ -108,8 +107,12 @@ func (s *InfraServer) HistoricalState(ctx context.Context, req *api.HistoricalSt
 	if block == nil {
 		return nil, errors.New("block re-org detected")
 	}
+	blockHash, ok := block["hash"].(common.Hash)
+	if !ok {
+		return nil, fmt.Errorf("invalid block: %v", block)
+	}
 	resp := &api.HistoricalStateResponse{
-		BlockHash: block["hash"].(common.Hash).Bytes(),
+		BlockHash: blockHash.Bytes(),
 	}
 	for i := 0; i < len(req.Address); i++ {
 		storage, err := s.ethBackend.GetStorageAt(
@@ -254,6 +257,7 @@ func (s *InfraServer) Simulate(req *api.SimulateRequest, ss api.MEVInfra_Simulat
 							err = fmt.Errorf("unknown tx encoding: %s", op.Encoding)
 						}
 						if err != nil {
+							log.Error("failed to unmarshal transaction", "err", err)
 							return err
 						}
 						txHash = tx.Hash()
@@ -262,13 +266,15 @@ func (s *InfraServer) Simulate(req *api.SimulateRequest, ss api.MEVInfra_Simulat
 					case api.SimulateTxType_SIMULATE_TXHASH:
 						var tx types.Transaction
 						var rpcTx hexutil.Bytes
-						hash := common.BytesToHash(op.Data)
+						hash := common.HexToHash(string(op.Data))
 						rpcTx, err = s.ethBackend.GetRawTransactionByHash(ctx, hash)
 						if err != nil {
+							log.Error("failed to get raw transaction", "err", err)
 							return err
 						}
 						tx, err = types.UnmarshalTransactionFromBinary(rpcTx)
 						if err != nil {
+							log.Error("failed to unmarshal transaction", "err", err)
 							return err
 						}
 						txHash = tx.Hash()
@@ -280,6 +286,7 @@ func (s *InfraServer) Simulate(req *api.SimulateRequest, ss api.MEVInfra_Simulat
 						return fmt.Errorf("unknown tx type: %s", op.Type)
 					}
 					if err != nil {
+						log.Error("failed to create message", "err", err)
 						return err
 					}
 					messages = append(messages, msg)
@@ -297,6 +304,7 @@ func (s *InfraServer) Simulate(req *api.SimulateRequest, ss api.MEVInfra_Simulat
 				for idx, message := range messages {
 					e.ec.PrepareForTx(common.Hash{}, txHashes[idx], idx, message)
 					if _, err := e.ec.Execute(); err != nil {
+						log.Error("failed to simulate", "tx", txHashes[idx].Hex(), "err", err)
 						return err
 					}
 				}
