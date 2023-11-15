@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -9,6 +10,8 @@ import (
 	"reflect"
 	"strings"
 	"syscall"
+
+	"github.com/ledgerwatch/erigon/mev-lib"
 
 	"github.com/ledgerwatch/erigon-lib/common/dbg"
 	"github.com/ledgerwatch/log/v3"
@@ -74,10 +77,26 @@ func runErigon(cliCtx *cli.Context) error {
 	ethCfg := node.NewEthConfigUrfave(cliCtx, nodeCfg)
 
 	ethNode, err := node.New(nodeCfg, ethCfg, logger)
+	mevFlag := node.NewMEVFlagUrfave(cliCtx)
 	if err != nil {
 		log.Error("Erigon startup", "err", err)
 		return err
 	}
+
+	if mevFlag.Enable {
+		mev.MainInit()
+		mevCtx, cancel := context.WithCancel(context.Background())
+		defer func() {
+			cancel()
+			mev.WaitForShutdown()
+		}()
+		if err := mev.LaunchInfraServer(mevCtx, mevFlag.ConfigPath,
+			ethNode.Backend(), ethNode.Backend().APIs()); err != nil {
+			log.Error("MEV infra server failed", "err", err)
+			return err
+		}
+	}
+
 	err = ethNode.Serve()
 	if err != nil {
 		log.Error("error while serving an Erigon node", "err", err)

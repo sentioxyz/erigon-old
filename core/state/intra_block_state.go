@@ -101,6 +101,11 @@ func New(stateReader StateReader) *IntraBlockState {
 	}
 }
 
+func (sdb *IntraBlockState) SetTxContext(thash libcommon.Hash, ti int) {
+	sdb.thash = thash
+	sdb.txIndex = ti
+}
+
 func (sdb *IntraBlockState) SetTrace(trace bool) {
 	sdb.trace = trace
 }
@@ -772,4 +777,11 @@ func (sdb *IntraBlockState) AddressInAccessList(addr libcommon.Address) bool {
 // SlotInAccessList returns true if the given (address, slot)-tuple is in the access list.
 func (sdb *IntraBlockState) SlotInAccessList(addr libcommon.Address, slot libcommon.Hash) (addressPresent bool, slotPresent bool) {
 	return sdb.accessList.Contains(addr, slot)
+}
+
+func (sdb *IntraBlockState) SetCodeWithHashKnown(addr libcommon.Address, codeHash libcommon.Hash, code []byte) {
+	stateObject := sdb.GetOrNewStateObject(addr)
+	if stateObject != nil {
+		stateObject.SetCode(codeHash, code)
+	}
 }
