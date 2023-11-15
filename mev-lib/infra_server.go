@@ -62,7 +62,8 @@ type InfraServer struct {
 
 func NewInfraServer(eth *eth.Ethereum, apiList []rpc.API) *InfraServer {
 	s := &InfraServer{
-		eth: eth,
+		eth:                         eth,
+		UnimplementedMEVInfraServer: &api.UnimplementedMEVInfraServer{},
 	}
 	for _, a := range apiList {
 		switch a.Namespace {
@@ -95,20 +96,25 @@ func NewInfraServer(eth *eth.Ethereum, apiList []rpc.API) *InfraServer {
 
 func (s *InfraServer) HistoricalState(ctx context.Context, req *api.HistoricalStateRequest) (*api.HistoricalStateResponse, error) {
 	if s.ethBackend == nil {
+		log.Error("eth API is not available")
 		return nil, fmt.Errorf("eth API is not available")
 	}
 	if len(req.StorageKey) != len(req.Address) {
+		log.Error("address and storage key length mismatch")
 		return nil, fmt.Errorf("address and storage key length mismatch")
 	}
 	block, err := s.ethBackend.GetBlockByNumber(ctx, rpc.BlockNumber(req.BlockNumber), false)
 	if err != nil {
+		log.Error("failed to get block", "err", err, "block", req.BlockNumber)
 		return nil, err
 	}
 	if block == nil {
+		log.Error("block not found", "block", req.BlockNumber)
 		return nil, errors.New("block re-org detected")
 	}
 	blockHash, ok := block["hash"].(common.Hash)
 	if !ok {
+		log.Error("invalid block", "block", block)
 		return nil, fmt.Errorf("invalid block: %v", block)
 	}
 	resp := &api.HistoricalStateResponse{
@@ -121,6 +127,7 @@ func (s *InfraServer) HistoricalState(ctx context.Context, req *api.HistoricalSt
 			common.BytesToHash(req.StorageKey[i]).String(),
 			rpc.BlockNumberOrHashWithNumber(rpc.BlockNumber(req.BlockNumber)))
 		if err != nil {
+			log.Error("failed to get storage", "err", err, "address", req.Address[i], "key", req.StorageKey[i])
 			return nil, err
 		}
 		resp.Value = append(resp.Value, []byte(storage))
