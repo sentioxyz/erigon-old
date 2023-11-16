@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math/big"
 	"time"
 
 	"github.com/ledgerwatch/erigon-lib/kv"
@@ -12,10 +11,11 @@ import (
 	"github.com/ledgerwatch/erigon/core/types"
 	"github.com/ledgerwatch/erigon/rpc"
 	"github.com/ledgerwatch/erigon/turbo/rpchelper"
+	"github.com/ledgerwatch/erigon/turbo/shards"
+	"github.com/ledgerwatch/log/v3"
 )
 
 type simulateEnv struct {
-	block   *types.Block
 	header  *types.Header
 	statedb *state.IntraBlockState
 	tracer  *SimulateTracer
@@ -23,17 +23,20 @@ type simulateEnv struct {
 }
 
 func (s *InfraServer) StateDBAtBlock(tx kv.Tx,
-	block *types.Block,
+	blockNumber uint64,
 ) (*state.IntraBlockState, error) {
+	stateCache := shards.NewStateCache(32, 0)
 	stateReader, err := rpchelper.CreateHistoryStateReader(
-		tx, block.NumberU64(),
+		tx, blockNumber,
 		0, false,
 		s.eth.ChainConfig().ChainName,
 		s.eth.BitmapDB())
 	if err != nil {
 		return nil, err
 	}
-	return state.New(stateReader), nil
+	cachedReader := state.NewCachedReader(stateReader, stateCache)
+	ibs := state.New(cachedReader)
+	return ibs, nil
 }
 
 func (s *InfraServer) withSimulateEnv(ctx context.Context,
@@ -46,37 +49,36 @@ func (s *InfraServer) withSimulateEnv(ctx context.Context,
 		return err
 	}
 	defer tx.Rollback()
-
-	block, err := s.GetBlockByNumber(ctx,
-		rpc.BlockNumber(blockNumber))
+	header, err := s.erigonBackend.GetHeaderByNumber(ctx, rpc.BlockNumber(blockNumber))
 	if err != nil {
+		log.Error("failed to get header by number")
 		return err
 	}
-	if block == nil {
-		return errors.New("block re-org detected")
-	}
-	statedb, err := s.StateDBAtBlock(tx, block)
+	parentBN := blockNumber - 1
+
+	_, err = s.erigonBackend.GetHeaderByNumber(ctx, rpc.BlockNumber(parentBN))
 	if err != nil {
+		log.Error("failed to get parent header by number")
+		return err
+	}
+	statedb, err := s.StateDBAtBlock(tx, parentBN)
+	if err != nil {
+		log.Error("failed to create state db")
 		return errors.New("failed to create state db")
 	}
+	statedb.Reset()
+
 	env := &simulateEnv{
 		tracer:  tracer,
-		block:   block,
 		statedb: statedb,
-		header: &types.Header{
-			ParentHash: block.Hash(),
-			Number:     new(big.Int).Add(block.Number(), big.NewInt(1)),
-			GasLimit:   block.GasLimit(),
-			Time:       uint64(time.Now().Unix()),
-			Difficulty: block.Difficulty(),
-			Coinbase:   block.Coinbase(),
-			BaseFee:    block.BaseFee(),
-		},
+		header:  header,
 	}
+	header.Time = uint64(time.Now().Unix())
 	if err := prepFn(env); err != nil {
+		log.Error("prepare fn failed")
 		return err
 	}
-	ec, err := CreateSimulationContext(ctx, s.eth, tx, abiType, env.statedb, env.header, tracer)
+	ec, err := CreateSimulationContext(ctx, s.eth, s.erigonBackend, abiType, env.statedb, env.header, env.tracer)
 	if err != nil {
 		return fmt.Errorf("failed to create execution context: %w", err)
 	}
