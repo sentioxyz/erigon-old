@@ -11,7 +11,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/holiman/uint256"
 	"github.com/ledgerwatch/erigon-lib/common"
+	"github.com/ledgerwatch/erigon-lib/common/hexutility"
 	"github.com/ledgerwatch/erigon/cmd/rpcdaemon/commands"
+	erigoncommon "github.com/ledgerwatch/erigon/common"
 	"github.com/ledgerwatch/erigon/common/hexutil"
 	"github.com/ledgerwatch/erigon/common/math"
 	"github.com/ledgerwatch/erigon/core/state"
@@ -123,14 +125,14 @@ func (s *InfraServer) HistoricalState(ctx context.Context, req *api.HistoricalSt
 	for i := 0; i < len(req.Address); i++ {
 		storage, err := s.ethBackend.GetStorageAt(
 			ctx,
-			common.BytesToAddress(req.Address[i]),
-			common.BytesToHash(req.StorageKey[i]).String(),
+			common.HexToAddress(string(req.Address[i])),
+			string(req.StorageKey[i]),
 			rpc.BlockNumberOrHashWithNumber(rpc.BlockNumber(req.BlockNumber)))
 		if err != nil {
 			log.Error("failed to get storage", "err", err, "address", req.Address[i], "key", req.StorageKey[i])
 			return nil, err
 		}
-		resp.Value = append(resp.Value, []byte(storage))
+		resp.Value = append(resp.Value, erigoncommon.LeftPadBytes(hexutility.Hex2Bytes(storage), 32))
 	}
 	return resp, nil
 }
@@ -309,7 +311,7 @@ func (s *InfraServer) Simulate(req *api.SimulateRequest, ss api.MEVInfra_Simulat
 			},
 			func(env *simulateEnv) error {
 				for idx, message := range messages {
-					e.ec.PrepareForTx(common.Hash{}, txHashes[idx], idx, message)
+					e.ec.PrepareForTx(txHashes[idx], idx, message)
 					if _, err := e.ec.Execute(); err != nil {
 						log.Error("failed to simulate", "tx", txHashes[idx].Hex(), "err", err)
 						return err
@@ -342,7 +344,7 @@ func applyStateOverride(statedb *state.IntraBlockState, override *api.StateOverr
 		}
 	}
 	if override.Nonce > 0 {
-		statedb.SetNonce(address, uint64(override.Nonce))
+		statedb.SetNonce(address, override.Nonce)
 	}
 }
 
@@ -391,26 +393,4 @@ func (s *InfraServer) PrepareSimulateEnv(ctx context.Context, req *api.PrepareSi
 	return &api.PrepareSimulateEnvResponse{
 		PreparedSimulateEnv: name,
 	}, nil
-}
-
-func (s *InfraServer) GetBlockByNumber(ctx context.Context, blockNumber rpc.BlockNumber) (*types.Block, error) {
-	if blockNumber == rpc.PendingBlockNumber {
-		return nil, nil
-	}
-
-	tx, err := s.eth.ChainDB().BeginRo(ctx)
-	if err != nil {
-		return nil, err
-	}
-	defer tx.Rollback()
-
-	blockReader := s.eth.BlockIO()
-	block, _, err := blockReader.BlockWithSenders(ctx, tx, common.Hash{}, uint64(blockNumber.Int64()))
-	if err != nil {
-		return nil, err
-	}
-	if block == nil {
-		return nil, fmt.Errorf("block not found: %d", uint64(blockNumber.Int64()))
-	}
-	return block, nil
 }
