@@ -7,6 +7,9 @@ import (
 	jsoniter "github.com/json-iterator/go"
 	libcommon "github.com/ledgerwatch/erigon-lib/common"
 	"github.com/ledgerwatch/erigon-lib/kv"
+	"github.com/ledgerwatch/erigon/core/types"
+	"github.com/ledgerwatch/erigon/core/vm"
+	"github.com/ledgerwatch/erigon/mev-lib/api"
 
 	"github.com/ledgerwatch/erigon/cmd/rpcdaemon/cli/httpcfg"
 	"github.com/ledgerwatch/erigon/common/hexutil"
@@ -21,6 +24,9 @@ type TraceAPI interface {
 	Call(ctx context.Context, call TraceCallParam, types []string, blockNr *rpc.BlockNumberOrHash) (*TraceCallResult, error)
 	CallMany(ctx context.Context, calls json.RawMessage, blockNr *rpc.BlockNumberOrHash) ([]*TraceCallResult, error)
 	RawTransaction(ctx context.Context, txHash libcommon.Hash, traceTypes []string) ([]interface{}, error)
+	MEVCallMany(ctx context.Context, tracer vm.EVMLogger, traceTypes []string, txs []types.Transaction,
+		blockNr *rpc.BlockNumberOrHash, stateOverrides []*api.StateOverride, knownCodeHashes []libcommon.Hash) ([]*TraceCallResult,
+		error)
 
 	// Filtering (see ./trace_filtering.go)
 	Transaction(ctx context.Context, txHash libcommon.Hash) (ParityTraces, error)

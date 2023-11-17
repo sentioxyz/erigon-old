@@ -23,6 +23,7 @@ import (
 	ethapi2 "github.com/ledgerwatch/erigon/turbo/adapter/ethapi"
 	"github.com/ledgerwatch/log/v3"
 	"github.com/pkg/errors"
+	"golang.org/x/sync/errgroup"
 )
 
 const (
@@ -262,147 +263,96 @@ func (s *InfraServer) SimulateSingleTxWithErigon(req *api.SimulateRequest, ss ap
 	return nil
 }
 
+func (s *InfraServer) SimulateManyWithErigon(req *api.SimulateRequest, ss api.MEVInfra_SimulateServer) error {
+	ctx := ss.Context()
+	respChan := make(chan *api.SimulateResponse, defaultChannelSize)
+	tracer := NewSimulateTracer(req, respChan)
+	g, ctx := errgroup.WithContext(ctx)
+	g.Go(func() error {
+		for {
+			select {
+			case resp, ok := <-respChan:
+				if !ok {
+					return nil
+				}
+				if err := ss.Send(resp); err != nil {
+					log.Error("failed to send response", "err", err)
+					return err
+				}
+			}
+		}
+	})
+	g.Go(func() error {
+		defer close(respChan)
+		var txs []types.Transaction
+		for _, op := range req.GetBundle() {
+			var err error
+			var tx types.Transaction
+			switch op.Type {
+			case api.SimulateTxType_SIMULATE_TXDATA:
+				switch op.Encoding {
+				case api.TxEncoding_TX_ENCODING_RLP:
+					tx, err = types.UnmarshalTransactionFromBinary(op.Data)
+				default:
+					err = fmt.Errorf("unknown tx encoding: %s", op.Encoding)
+				}
+				if err != nil {
+					log.Error("failed to unmarshal transaction", "err", err)
+					return err
+				}
+			case api.SimulateTxType_SIMULATE_TXHASH:
+				txHash := libcommon.HexToHash(string(op.Data))
+				var rpcTx hexutil.Bytes
+				rpcTx, err = s.ethBackend.GetRawTransactionByHash(ctx, txHash)
+				if err != nil {
+					log.Error("failed to get raw transaction", "err", err)
+					return err
+				}
+				tx, err = types.UnmarshalTransactionFromBinary(rpcTx)
+				if err != nil {
+					log.Error("failed to unmarshal transaction", "err", err)
+				}
+			case api.SimulateTxType_SIMULATE_RAW_MESSAGE:
+				err = fmt.Errorf("raw message is not supported")
+			default:
+				return fmt.Errorf("unknown tx type: %s", op.Type)
+			}
+			if err != nil {
+				log.Error("failed to get transaction", "err", err)
+			}
+			txs = append(txs, tx)
+		}
+		blockNumber := rpc.BlockNumberOrHashWithNumber(rpc.BlockNumber(req.GetStateBlockNumber()))
+		var stateOverrides []*api.StateOverride
+		var knownCodeHashes []libcommon.Hash
+		for _, override := range req.GetStateOverrides() {
+			stateOverrides = append(stateOverrides, override)
+			knownCodeHashes = append(knownCodeHashes, libcommon.Hash{})
+		}
+		if req.GetPreparedSimulateEnv() != "" {
+			s.mu.RLock()
+			preparedEnv, ok := s.preparedSimulateEnvMap[req.PreparedSimulateEnv]
+			s.mu.RUnlock()
+			if !ok {
+				return fmt.Errorf("prepared simulate env not found: %s", req.PreparedSimulateEnv)
+			}
+			stateOverrides = append(stateOverrides, preparedEnv.stateOverrides...)
+			knownCodeHashes = append(knownCodeHashes, preparedEnv.knownCodeHashes...)
+		}
+		_, err := s.traceBackend.MEVCallMany(ctx, tracer,
+			[]string{"mevTrace"}, txs, &blockNumber, stateOverrides, knownCodeHashes)
+		if err != nil {
+			log.Error("failed to simulate", "err", err)
+			return err
+		}
+		return nil
+	})
+	return g.Wait()
+}
+
 func (s *InfraServer) Simulate(req *api.SimulateRequest, ss api.MEVInfra_SimulateServer) error {
-	return s.SimulateSingleTxWithErigon(req, ss)
-	// ctx := ss.Context()
-	// abiType := ABITypeGeth
-	// sendCh := make(chan *api.SimulateResponse, defaultChannelSize)
-	// tracer := &SimulateTracer{
-	// 	req:              req,
-	// 	sendCh:           sendCh,
-	// 	includeLogs:      req.IncludeLogs,
-	// 	includeStateDiff: req.IncludeStateDiff,
-	// }
-	// var e *simulateEnv
-	// g, ctx := errgroup.WithContext(ctx)
-	// g.Go(func() error {
-	// 	for {
-	// 		select {
-	// 		case resp, ok := <-sendCh:
-	// 			if !ok {
-	// 				return nil
-	// 			}
-	// 			if err := ss.Send(resp); err != nil {
-	// 				log.Error("failed to send response", "err", err)
-	// 				return err
-	// 			}
-	// 		}
-	// 	}
-	// })
-	// g.Go(func() error {
-	// 	defer close(sendCh)
-	// 	var messages []MessageType
-	// 	var txHashes []libcommon.Hash
-	// 	var xorTxHash libcommon.Hash
-	// 	return s.withSimulateEnv(ctx, uint64(req.StateBlockNumber), abiType, tracer,
-	// 		func(env *simulateEnv) error {
-	// 			e = env
-	// 			tracer.statedb = e.statedb
-	// 			statedb, header := e.statedb, e.header
-	// 			if req.BlockOverrides != nil {
-	// 				if req.BlockOverrides.BlockNumber > 0 {
-	// 					header.Number = new(big.Int).SetUint64(req.BlockOverrides.BlockNumber)
-	// 				}
-	// 				if req.BlockOverrides.Timestamp > 0 {
-	// 					header.Time = uint64(req.BlockOverrides.Timestamp)
-	// 				}
-	// 				if len(req.BlockOverrides.Coinbase) > 0 {
-	// 					header.Coinbase = libcommon.BytesToAddress(req.BlockOverrides.Coinbase)
-	// 				}
-	// 				if req.BlockOverrides.Difficulty > 0 {
-	// 					header.Difficulty = new(big.Int).SetUint64(req.BlockOverrides.Difficulty)
-	// 				}
-	// 				if req.BlockOverrides.BaseFee > 0 {
-	// 					header.BaseFee = new(big.Int).SetUint64(req.BlockOverrides.BaseFee)
-	// 				}
-	// 			}
-	// 			if req.PreparedSimulateEnv != "" {
-	// 				s.mu.RLock()
-	// 				preparedEnv, ok := s.preparedSimulateEnvMap[req.PreparedSimulateEnv]
-	// 				s.mu.RUnlock()
-	// 				if !ok {
-	// 					return fmt.Errorf("prepared simulate env not found: %s", req.PreparedSimulateEnv)
-	// 				}
-	// 				preparedEnv.ApplyTo(statedb, header)
-	// 			}
-	// 			if len(req.StateOverrides) > 0 {
-	// 				for _, override := range req.StateOverrides {
-	// 					applyStateOverride(statedb, override, nil)
-	// 				}
-	// 			}
-	//
-	// 			signer := types.MakeSigner(s.eth.ChainConfig(), header.Number.Uint64())
-	// 			for _, op := range req.Bundle {
-	// 				var txHash libcommon.Hash
-	// 				var msg MessageType
-	// 				var err error
-	//
-	// 				switch op.Type {
-	// 				case api.SimulateTxType_SIMULATE_TXDATA:
-	// 					var tx types.Transaction
-	// 					switch op.Encoding {
-	// 					case api.TxEncoding_TX_ENCODING_RLP:
-	// 						tx, err = types.UnmarshalTransactionFromBinary(op.Data)
-	// 					default:
-	// 						err = fmt.Errorf("unknown tx encoding: %s", op.Encoding)
-	// 					}
-	// 					if err != nil {
-	// 						log.Error("failed to unmarshal transaction", "err", err)
-	// 						return err
-	// 					}
-	// 					txHash = tx.Hash()
-	// 					msg, err = tx.AsMessage(*signer, header.BaseFee,
-	// 						s.eth.ChainConfig().Rules(header.Number.Uint64(), header.Time))
-	// 				case api.SimulateTxType_SIMULATE_TXHASH:
-	// 					var tx types.Transaction
-	// 					var rpcTx hexutil.Bytes
-	// 					hash := libcommon.HexToHash(string(op.Data))
-	// 					rpcTx, err = s.ethBackend.GetRawTransactionByHash(ctx, hash)
-	// 					if err != nil {
-	// 						log.Error("failed to get raw transaction", "err", err)
-	// 						return err
-	// 					}
-	// 					tx, err = types.UnmarshalTransactionFromBinary(rpcTx)
-	// 					if err != nil {
-	// 						log.Error("failed to unmarshal transaction", "err", err)
-	// 						return err
-	// 					}
-	// 					txHash = tx.Hash()
-	// 					msg, err = tx.AsMessage(*signer, header.BaseFee,
-	// 						s.eth.ChainConfig().Rules(header.Number.Uint64(), header.Time))
-	// 				case api.SimulateTxType_SIMULATE_RAW_MESSAGE:
-	// 					err = fmt.Errorf("raw message is not supported")
-	// 				default:
-	// 					return fmt.Errorf("unknown tx type: %s", op.Type)
-	// 				}
-	// 				if err != nil {
-	// 					log.Error("failed to create message", "err", err)
-	// 					return err
-	// 				}
-	// 				messages = append(messages, msg)
-	// 				txHashes = append(txHashes, txHash)
-	// 				for i := range xorTxHash {
-	// 					xorTxHash[i] ^= txHash[i]
-	// 				}
-	// 			}
-	// 			if len(messages) == 0 {
-	// 				return errors.New("no messages to simulate")
-	// 			}
-	// 			return nil
-	// 		},
-	// 		func(env *simulateEnv) error {
-	// 			for idx, message := range messages {
-	// 				e.ec.PrepareForTx(txHashes[idx], idx, message)
-	// 				if _, err := e.ec.Execute(); err != nil {
-	// 					log.Error("failed to simulate", "tx", txHashes[idx].Hex(), "err", err)
-	// 					return err
-	// 				}
-	// 			}
-	// 			return nil
-	// 		},
-	// 	)
-	// })
-	// return g.Wait()
+	// s.SimulateSingleTxWithErigon(req, ss)
+	return s.SimulateManyWithErigon(req, ss)
 }
 
 func applyStateOverride(statedb *state.IntraBlockState, override *api.StateOverride, knownCodeHash *libcommon.Hash) {
