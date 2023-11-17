@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"math/big"
 	"strings"
 
 	"github.com/holiman/uint256"
@@ -1273,6 +1274,7 @@ func (api *TraceAPIImpl) doMEVCallMany(ctx context.Context, dbtx kv.Tx, tracer v
 	txs []types.Transaction, msgs []types.Message,
 	parentNrOrHash *rpc.BlockNumberOrHash, header *types.Header,
 	stateOverrides []*api.StateOverride,
+	blockOverrides *api.BlockOverrides,
 	knownCodeHashes []libcommon.Hash,
 	gasBailout bool, txIndexNeeded int) ([]*TraceCallResult, error) {
 	chainConfig, err := api.chainConfig(dbtx)
@@ -1334,6 +1336,24 @@ func (api *TraceAPIImpl) doMEVCallMany(ctx context.Context, dbtx kv.Tx, tracer v
 	if header == nil {
 		header = parentHeader
 		useParent = true
+	}
+
+	if blockOverrides != nil {
+		if blockOverrides.BlockNumber > 0 {
+			header.Number = new(big.Int).SetUint64(blockOverrides.BlockNumber)
+		}
+		if blockOverrides.Timestamp > 0 {
+			header.Time = uint64(blockOverrides.Timestamp)
+		}
+		if len(blockOverrides.Coinbase) > 0 {
+			header.Coinbase = libcommon.BytesToAddress(blockOverrides.Coinbase)
+		}
+		if blockOverrides.Difficulty > 0 {
+			header.Difficulty = new(big.Int).SetUint64(blockOverrides.Difficulty)
+		}
+		if blockOverrides.BaseFee > 0 {
+			header.BaseFee = new(big.Int).SetUint64(blockOverrides.BaseFee)
+		}
 	}
 
 	for txIndex, msg := range msgs {
@@ -1440,6 +1460,7 @@ func (api *TraceAPIImpl) doMEVCallMany(ctx context.Context, dbtx kv.Tx, tracer v
 func (api *TraceAPIImpl) MEVCallMany(ctx context.Context, tracer vm.EVMLogger, traceTypes []string, txs []types.Transaction,
 	parentNrOrHash *rpc.BlockNumberOrHash,
 	stateOverrides []*api.StateOverride,
+	blockOverrides *api.BlockOverrides,
 	knownCodeHashes []libcommon.Hash) ([]*TraceCallResult, error) {
 	dbtx, err := api.kv.BeginRo(ctx)
 	if err != nil {
@@ -1490,7 +1511,7 @@ func (api *TraceAPIImpl) MEVCallMany(ctx context.Context, tracer vm.EVMLogger, t
 	}
 	return api.doMEVCallMany(ctx, dbtx, tracer, traceTypes,
 		txs, msgs, parentNrOrHash, nil,
-		stateOverrides, knownCodeHashes,
+		stateOverrides, blockOverrides, knownCodeHashes,
 		true, /* gasBailout */
 		-1 /* all tx indices */)
 }

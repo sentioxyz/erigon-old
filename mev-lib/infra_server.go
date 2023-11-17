@@ -338,7 +338,7 @@ func (s *InfraServer) SimulateManyWithErigon(req *api.SimulateRequest, ss api.ME
 			knownCodeHashes = append(knownCodeHashes, preparedEnv.knownCodeHashes...)
 		}
 		_, err := s.traceBackend.MEVCallMany(ctx, tracer,
-			[]string{"mevTrace"}, txs, &blockNumber, stateOverrides, knownCodeHashes)
+			[]string{"mevTrace"}, txs, &blockNumber, stateOverrides, req.GetBlockOverrides(), knownCodeHashes)
 		if err != nil {
 			log.Error("failed to simulate", "err", err)
 			return err
