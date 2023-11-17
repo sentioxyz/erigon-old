@@ -6,7 +6,6 @@ import (
 
 	"github.com/holiman/uint256"
 	"github.com/ledgerwatch/erigon-lib/common"
-	"github.com/ledgerwatch/erigon/core/state"
 	"github.com/ledgerwatch/erigon/core/vm"
 	"github.com/ledgerwatch/erigon/mev-lib/api"
 )
@@ -38,9 +37,17 @@ func GetMemoryCopyPadded(m *vm.Memory, offset, size int64) ([]byte, error) {
 type SimulateTracer struct {
 	req              *api.SimulateRequest
 	sendCh           chan *api.SimulateResponse
-	statedb          *state.IntraBlockState
 	includeLogs      bool
 	includeStateDiff bool
+}
+
+func NewSimulateTracer(req *api.SimulateRequest, sendCh chan *api.SimulateResponse) *SimulateTracer {
+	return &SimulateTracer{
+		req:              req,
+		sendCh:           sendCh,
+		includeLogs:      req.IncludeLogs,
+		includeStateDiff: req.IncludeStateDiff,
+	}
 }
 
 var _ vm.EVMLogger = &SimulateTracer{}

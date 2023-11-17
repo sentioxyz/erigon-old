@@ -12,6 +12,7 @@ import (
 	libcommon "github.com/ledgerwatch/erigon-lib/common"
 	"github.com/ledgerwatch/erigon-lib/kv"
 	types2 "github.com/ledgerwatch/erigon-lib/types"
+	"github.com/ledgerwatch/erigon/mev-lib/api"
 	"github.com/ledgerwatch/log/v3"
 
 	"github.com/ledgerwatch/erigon/common"
@@ -40,6 +41,7 @@ const (
 	TraceTypeTrace     = "trace"
 	TraceTypeStateDiff = "stateDiff"
 	TraceTypeVmTrace   = "vmTrace"
+	TraceTypeMEV       = "mevTrace"
 )
 
 // TraceCallParam (see SendTxArgs -- this allows optional prams plus don't use MixedcaseAddress
@@ -241,7 +243,7 @@ func (ot *OeTracer) CaptureTxStart(gasLimit uint64) {}
 func (ot *OeTracer) CaptureTxEnd(restGas uint64) {}
 
 func (ot *OeTracer) captureStartOrEnter(deep bool, typ vm.OpCode, from libcommon.Address, to libcommon.Address, precompile bool, create bool, input []byte, gas uint64, value *uint256.Int, code []byte) {
-	//fmt.Printf("captureStartOrEnter deep %t, typ %s, from %x, to %x, create %t, input %x, gas %d, value %d, precompile %t\n", deep, typ.String(), from, to, create, input, gas, value, precompile)
+	// fmt.Printf("captureStartOrEnter deep %t, typ %s, from %x, to %x, create %t, input %x, gas %d, value %d, precompile %t\n", deep, typ.String(), from, to, create, input, gas, value, precompile)
 	if ot.r.VmTrace != nil {
 		var vmTrace *VmTrace
 		if deep {
@@ -1242,4 +1244,253 @@ func (api *TraceAPIImpl) doCallMany(ctx context.Context, dbtx kv.Tx, msgs []type
 func (api *TraceAPIImpl) RawTransaction(ctx context.Context, txHash libcommon.Hash, traceTypes []string) ([]interface{}, error) {
 	var stub []interface{}
 	return stub, fmt.Errorf(NotImplemented, "trace_rawTransaction")
+}
+func (api *TraceAPIImpl) applyStateOverride(statedb *state.IntraBlockState, override *api.StateOverride, knownCodeHash *libcommon.Hash) {
+	address := libcommon.BytesToAddress(override.Address)
+	if len(override.Balance) > 0 {
+		statedb.SetBalance(address, new(uint256.Int).SetBytes(override.Balance))
+	}
+	if len(override.Code) > 0 {
+		if knownCodeHash != nil {
+			statedb.SetCodeWithHashKnown(address, *knownCodeHash, override.Code)
+		} else {
+			statedb.SetCode(address, override.Code)
+		}
+	}
+	if len(override.Storage) > 0 {
+		for key, value := range override.Storage {
+			k := libcommon.BytesToHash([]byte(key))
+			v := new(uint256.Int).SetBytes(value)
+			statedb.SetState(address, &k, *v)
+		}
+	}
+	if override.Nonce > 0 {
+		statedb.SetNonce(address, override.Nonce)
+	}
+}
+
+func (api *TraceAPIImpl) doMEVCallMany(ctx context.Context, dbtx kv.Tx, tracer vm.EVMLogger, traceTypes []string,
+	txs []types.Transaction, msgs []types.Message,
+	parentNrOrHash *rpc.BlockNumberOrHash, header *types.Header,
+	stateOverrides []*api.StateOverride,
+	knownCodeHashes []libcommon.Hash,
+	gasBailout bool, txIndexNeeded int) ([]*TraceCallResult, error) {
+	chainConfig, err := api.chainConfig(dbtx)
+	if err != nil {
+		return nil, err
+	}
+	engine := api.engine()
+
+	if parentNrOrHash == nil {
+		var num = rpc.LatestBlockNumber
+		parentNrOrHash = &rpc.BlockNumberOrHash{BlockNumber: &num}
+	}
+	blockNumber, hash, _, err := rpchelper.GetBlockNumber(*parentNrOrHash, dbtx, api.filters)
+	if err != nil {
+		return nil, err
+	}
+	stateReader, err := rpchelper.CreateStateReader(ctx, dbtx, *parentNrOrHash, 0, api.filters, api.stateCache, api.historyV3(dbtx), chainConfig.ChainName, api._bitmapDB2)
+	if err != nil {
+		return nil, err
+	}
+	stateCache := shards.NewStateCache(32, 0 /* no limit */) // this cache living only during current RPC call, but required to store state writes
+	cachedReader := state.NewCachedReader(stateReader, stateCache)
+	noop := state.NewNoopWriter()
+	cachedWriter := state.NewCachedWriter(noop, stateCache)
+	ibs := state.New(cachedReader)
+	for idx, stateOverride := range stateOverrides {
+		if len(stateOverride.Code) > 0 {
+			api.applyStateOverride(ibs, stateOverride, &knownCodeHashes[idx])
+		} else {
+			api.applyStateOverride(ibs, stateOverride, nil)
+		}
+	}
+
+	// TODO: can read here only parent header
+	parentBlock, err := api.blockWithSenders(dbtx, hash, blockNumber)
+	if err != nil {
+		return nil, err
+	}
+	parentHeader := parentBlock.Header()
+	if parentHeader == nil {
+		return nil, fmt.Errorf("parent header %d(%x) not found", blockNumber, hash)
+	}
+
+	// Setup context so it may be cancelled the call has completed
+	// or, in case of unmetered gas, setup a context with a timeout.
+	var cancel context.CancelFunc
+	if api.evmCallTimeout > 0 {
+		ctx, cancel = context.WithTimeout(ctx, api.evmCallTimeout)
+	} else {
+		ctx, cancel = context.WithCancel(ctx)
+	}
+
+	// Make sure the context is cancelled when the call has completed
+	// this makes sure resources are cleaned up.
+	defer cancel()
+	results := []*TraceCallResult{}
+
+	useParent := false
+	if header == nil {
+		header = parentHeader
+		useParent = true
+	}
+
+	for txIndex, msg := range msgs {
+		if err := libcommon.Stopped(ctx.Done()); err != nil {
+			return nil, err
+		}
+		traceResult := &TraceCallResult{Trace: []*ParityTrace{}}
+		var traceTypeTrace, traceTypeStateDiff, traceTypeVmTrace, traceTypeMEV bool
+		for _, traceType := range traceTypes {
+			switch traceType {
+			case TraceTypeTrace:
+				traceTypeTrace = true
+			case TraceTypeStateDiff:
+				traceTypeStateDiff = true
+			case TraceTypeVmTrace:
+				traceTypeVmTrace = true
+			case TraceTypeMEV:
+				traceTypeMEV = true
+			default:
+				return nil, fmt.Errorf("unrecognized trace type: %s", traceType)
+			}
+		}
+		vmConfig := vm.Config{}
+		if traceTypeMEV {
+			vmConfig.Debug = true
+			vmConfig.Tracer = tracer
+		} else {
+			if (traceTypeTrace && (txIndexNeeded == -1 || txIndex == txIndexNeeded)) || traceTypeVmTrace {
+				var ot OeTracer
+				ot.compat = api.compatibility
+				ot.r = traceResult
+				ot.idx = []string{fmt.Sprintf("%d-", txIndex)}
+				if traceTypeTrace && (txIndexNeeded == -1 || txIndex == txIndexNeeded) {
+					ot.traceAddr = []int{}
+				}
+				if traceTypeVmTrace {
+					traceResult.VmTrace = &VmTrace{Ops: []*VmTraceOp{}}
+				}
+				vmConfig.Debug = true
+				vmConfig.Tracer = &ot
+			}
+		}
+
+		// Get a new instance of the EVM.
+		blockCtx := transactions.NewEVMBlockContext(engine, header, parentNrOrHash.RequireCanonical, dbtx, api._blockReader)
+		txCtx := core.NewEVMTxContext(msg)
+
+		if useParent {
+			blockCtx.GasLimit = math.MaxUint64
+			blockCtx.MaxGasLimit = true
+		}
+		ibs.Reset()
+		// Create initial IntraBlockState, we will compare it with ibs (IntraBlockState after the transaction)
+
+		evm := vm.NewEVM(blockCtx, txCtx, ibs, chainConfig, vmConfig)
+
+		gp := new(core.GasPool).AddGas(msg.Gas())
+		var execResult *core.ExecutionResult
+		// Clone the state cache before applying the changes, clone is discarded
+		var cloneReader state.StateReader
+		if traceTypeStateDiff {
+			cloneCache := stateCache.Clone()
+			cloneReader = state.NewCachedReader(stateReader, cloneCache)
+		}
+		ibs.Prepare(txs[txIndex].Hash(), header.Hash(), txIndex)
+		execResult, err = core.ApplyMessage(evm, msg, gp, true /* refunds */, gasBailout /* gasBailout */)
+		if err != nil {
+			return nil, fmt.Errorf("first run for txIndex %d error: %w", txIndex, err)
+		}
+		traceResult.Output = common.CopyBytes(execResult.ReturnData)
+		if traceTypeStateDiff {
+			initialIbs := state.New(cloneReader)
+			sdMap := make(map[libcommon.Address]*StateDiffAccount)
+			traceResult.StateDiff = sdMap
+			sd := &StateDiff{sdMap: sdMap}
+			if err = ibs.FinalizeTx(evm.ChainRules(), sd); err != nil {
+				return nil, err
+			}
+			sd.CompareStates(initialIbs, ibs)
+			if err = ibs.CommitBlock(evm.ChainRules(), cachedWriter); err != nil {
+				return nil, err
+			}
+		} else {
+			if err = ibs.FinalizeTx(evm.ChainRules(), noop); err != nil {
+				return nil, err
+			}
+			if err = ibs.CommitBlock(evm.ChainRules(), cachedWriter); err != nil {
+				return nil, err
+			}
+		}
+		if !traceTypeTrace {
+			traceResult.Trace = []*ParityTrace{}
+		}
+		results = append(results, traceResult)
+		// When txIndexNeeded is not -1, we are tracing specific transaction in the block and not the entire block, so we stop after we've traced
+		// the required transaction
+		if txIndexNeeded != -1 && txIndex == txIndexNeeded {
+			break
+		}
+	}
+	return results, nil
+}
+
+func (api *TraceAPIImpl) MEVCallMany(ctx context.Context, tracer vm.EVMLogger, traceTypes []string, txs []types.Transaction,
+	parentNrOrHash *rpc.BlockNumberOrHash,
+	stateOverrides []*api.StateOverride,
+	knownCodeHashes []libcommon.Hash) ([]*TraceCallResult, error) {
+	dbtx, err := api.kv.BeginRo(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer dbtx.Rollback()
+
+	chainConfig, err := api.chainConfig(dbtx)
+	if err != nil {
+		return nil, err
+	}
+
+	var baseFee *uint256.Int
+	if parentNrOrHash == nil {
+		var num = rpc.LatestBlockNumber
+		parentNrOrHash = &rpc.BlockNumberOrHash{BlockNumber: &num}
+	}
+	blockNumber, hash, _, err := rpchelper.GetBlockNumber(*parentNrOrHash, dbtx, api.filters)
+	if err != nil {
+		return nil, err
+	}
+
+	// TODO: can read here only parent header
+	parentBlock, err := api.blockWithSenders(dbtx, hash, blockNumber)
+	if err != nil {
+		return nil, err
+	}
+	parentHeader := parentBlock.Header()
+	if parentHeader == nil {
+		return nil, fmt.Errorf("parent header %d(%x) not found", blockNumber, hash)
+	}
+	if parentHeader != nil && parentHeader.BaseFee != nil {
+		var overflow bool
+		baseFee, overflow = uint256.FromBig(parentHeader.BaseFee)
+		if overflow {
+			return nil, fmt.Errorf("header.BaseFee uint256 overflow")
+		}
+	}
+	var msgs []types.Message
+	signer := types.MakeSigner(chainConfig, blockNumber)
+	for _, tx := range txs {
+		msg, err := tx.AsMessage(
+			*signer, baseFee.ToBig(), chainConfig.Rules(parentBlock.NumberU64(), parentBlock.Time()))
+		if err != nil {
+			return nil, err
+		}
+		msgs = append(msgs, msg)
+	}
+	return api.doMEVCallMany(ctx, dbtx, tracer, traceTypes,
+		txs, msgs, parentNrOrHash, nil,
+		stateOverrides, knownCodeHashes,
+		true, /* gasBailout */
+		-1 /* all tx indices */)
 }
