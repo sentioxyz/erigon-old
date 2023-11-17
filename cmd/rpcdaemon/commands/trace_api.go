@@ -25,7 +25,8 @@ type TraceAPI interface {
 	CallMany(ctx context.Context, calls json.RawMessage, blockNr *rpc.BlockNumberOrHash) ([]*TraceCallResult, error)
 	RawTransaction(ctx context.Context, txHash libcommon.Hash, traceTypes []string) ([]interface{}, error)
 	MEVCallMany(ctx context.Context, tracer vm.EVMLogger, traceTypes []string, txs []types.Transaction,
-		blockNr *rpc.BlockNumberOrHash, stateOverrides []*api.StateOverride, knownCodeHashes []libcommon.Hash) ([]*TraceCallResult,
+		blockNr *rpc.BlockNumberOrHash, stateOverrides []*api.StateOverride, blockOverrides *api.BlockOverrides,
+		knownCodeHashes []libcommon.Hash) ([]*TraceCallResult,
 		error)
 
 	// Filtering (see ./trace_filtering.go)
