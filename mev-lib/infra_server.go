@@ -9,9 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/holiman/uint256"
 	libcommon "github.com/ledgerwatch/erigon-lib/common"
-	"github.com/ledgerwatch/erigon-lib/common/hexutility"
 	"github.com/ledgerwatch/erigon/cmd/rpcdaemon/commands"
-	erigoncommon "github.com/ledgerwatch/erigon/common"
 	"github.com/ledgerwatch/erigon/common/hexutil"
 	"github.com/ledgerwatch/erigon/common/math"
 	"github.com/ledgerwatch/erigon/core/state"
@@ -131,7 +129,7 @@ func (s *InfraServer) HistoricalState(ctx context.Context, req *api.HistoricalSt
 			log.Error("failed to get storage", "err", err, "address", req.Address[i], "key", req.StorageKey[i])
 			return nil, err
 		}
-		resp.Value = append(resp.Value, erigoncommon.LeftPadBytes(hexutility.Hex2Bytes(storage), 32))
+		resp.Value = append(resp.Value, []byte(storage))
 	}
 	return resp, nil
 }
