@@ -24,7 +24,8 @@ type TraceAPI interface {
 	Call(ctx context.Context, call TraceCallParam, types []string, blockNr *rpc.BlockNumberOrHash) (*TraceCallResult, error)
 	CallMany(ctx context.Context, calls json.RawMessage, blockNr *rpc.BlockNumberOrHash) ([]*TraceCallResult, error)
 	RawTransaction(ctx context.Context, txHash libcommon.Hash, traceTypes []string) ([]interface{}, error)
-	MEVCallMany(ctx context.Context, tracer vm.EVMLogger, traceTypes []string, txs []types.Transaction,
+	MEVCallMany(ctx context.Context, tracer vm.MEVLogger, traceTypes []string,
+		txs []types.Transaction, rawMsg []*types.Message,
 		blockNr *rpc.BlockNumberOrHash, stateOverrides []*api.StateOverride, blockOverrides *api.BlockOverrides,
 		knownCodeHashes []libcommon.Hash) ([]*TraceCallResult,
 		error)
