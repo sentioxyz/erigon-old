@@ -51,3 +51,8 @@ type FlushableTracer interface {
 	EVMLogger
 	Flush(tx types.Transaction)
 }
+
+type MEVLogger interface {
+	EVMLogger
+	CaptureTxEndMEV(usedGas uint64, err error, returnData []byte)
+}

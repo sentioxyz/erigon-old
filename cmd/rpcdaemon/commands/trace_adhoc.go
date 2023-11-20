@@ -1270,7 +1270,7 @@ func (api *TraceAPIImpl) applyStateOverride(statedb *state.IntraBlockState, over
 	}
 }
 
-func (api *TraceAPIImpl) doMEVCallMany(ctx context.Context, dbtx kv.Tx, tracer vm.EVMLogger, traceTypes []string,
+func (api *TraceAPIImpl) doMEVCallMany(ctx context.Context, dbtx kv.Tx, tracer vm.MEVLogger, traceTypes []string,
 	txs []types.Transaction, msgs []types.Message,
 	parentNrOrHash *rpc.BlockNumberOrHash, header *types.Header,
 	stateOverrides []*api.StateOverride,
@@ -1405,7 +1405,7 @@ func (api *TraceAPIImpl) doMEVCallMany(ctx context.Context, dbtx kv.Tx, tracer v
 			blockCtx.GasLimit = math.MaxUint64
 			blockCtx.MaxGasLimit = true
 		}
-		ibs.Reset()
+		// ibs.Reset()
 		// Create initial IntraBlockState, we will compare it with ibs (IntraBlockState after the transaction)
 
 		evm := vm.NewEVM(blockCtx, txCtx, ibs, chainConfig, vmConfig)
@@ -1418,7 +1418,11 @@ func (api *TraceAPIImpl) doMEVCallMany(ctx context.Context, dbtx kv.Tx, tracer v
 			cloneCache := stateCache.Clone()
 			cloneReader = state.NewCachedReader(stateReader, cloneCache)
 		}
-		ibs.Prepare(txs[txIndex].Hash(), header.Hash(), txIndex)
+		if txs[txIndex] == nil {
+			ibs.Prepare(libcommon.Hash{}, header.Hash(), txIndex)
+		} else {
+			ibs.Prepare(txs[txIndex].Hash(), header.Hash(), txIndex)
+		}
 		execResult, err = core.ApplyMessage(evm, msg, gp, true /* refunds */, gasBailout /* gasBailout */)
 		if err != nil {
 			return nil, fmt.Errorf("first run for txIndex %d error: %w", txIndex, err)
@@ -1444,6 +1448,9 @@ func (api *TraceAPIImpl) doMEVCallMany(ctx context.Context, dbtx kv.Tx, tracer v
 				return nil, err
 			}
 		}
+		if traceTypeMEV {
+			tracer.CaptureTxEndMEV(execResult.UsedGas, execResult.Err, execResult.ReturnData)
+		}
 		if !traceTypeTrace {
 			traceResult.Trace = []*ParityTrace{}
 		}
@@ -1457,11 +1464,17 @@ func (api *TraceAPIImpl) doMEVCallMany(ctx context.Context, dbtx kv.Tx, tracer v
 	return results, nil
 }
 
-func (api *TraceAPIImpl) MEVCallMany(ctx context.Context, tracer vm.EVMLogger, traceTypes []string, txs []types.Transaction,
+func (api *TraceAPIImpl) MEVCallMany(ctx context.Context,
+	tracer vm.MEVLogger,
+	traceTypes []string,
+	txs []types.Transaction, rawMsgs []*types.Message,
 	parentNrOrHash *rpc.BlockNumberOrHash,
 	stateOverrides []*api.StateOverride,
 	blockOverrides *api.BlockOverrides,
 	knownCodeHashes []libcommon.Hash) ([]*TraceCallResult, error) {
+	if len(txs) != len(rawMsgs) {
+		return nil, fmt.Errorf("txs and msgs length mismatch")
+	}
 	dbtx, err := api.kv.BeginRo(ctx)
 	if err != nil {
 		return nil, err
@@ -1501,13 +1514,18 @@ func (api *TraceAPIImpl) MEVCallMany(ctx context.Context, tracer vm.EVMLogger, t
 	}
 	var msgs []types.Message
 	signer := types.MakeSigner(chainConfig, blockNumber)
-	for _, tx := range txs {
-		msg, err := tx.AsMessage(
-			*signer, baseFee.ToBig(), chainConfig.Rules(parentBlock.NumberU64(), parentBlock.Time()))
-		if err != nil {
-			return nil, err
+	for idx, rawMsg := range rawMsgs {
+		if rawMsg != nil {
+			msgs = append(msgs, *rawMsg)
+		} else {
+			tx := txs[idx]
+			msg, err := tx.AsMessage(
+				*signer, baseFee.ToBig(), chainConfig.Rules(parentBlock.NumberU64(), parentBlock.Time()))
+			if err != nil {
+				return nil, err
+			}
+			msgs = append(msgs, msg)
 		}
-		msgs = append(msgs, msg)
 	}
 	return api.doMEVCallMany(ctx, dbtx, tracer, traceTypes,
 		txs, msgs, parentNrOrHash, nil,

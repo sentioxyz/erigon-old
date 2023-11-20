@@ -3,6 +3,7 @@ package mev
 import (
 	"context"
 	"fmt"
+	"math/big"
 	"sync"
 	"time"
 
@@ -261,6 +262,17 @@ func (s *InfraServer) SimulateSingleTxWithErigon(req *api.SimulateRequest, ss ap
 	return nil
 }
 
+func MakeRawMessage(from libcommon.Address, to *libcommon.Address,
+	gasLimit uint64, gasPrice *big.Int, value *big.Int,
+	data []byte, nonce uint64, skipAccountChecks bool) *types.Message {
+	msg := types.NewMessage(
+		from, to, nonce,
+		uint256.NewInt(value.Uint64()), gasLimit, uint256.NewInt(gasPrice.Uint64()),
+		nil, nil,
+		data, nil, false, true)
+	return &msg
+}
+
 func (s *InfraServer) SimulateManyWithErigon(req *api.SimulateRequest, ss api.MEVInfra_SimulateServer) error {
 	ctx := ss.Context()
 	respChan := make(chan *api.SimulateResponse, defaultChannelSize)
@@ -283,9 +295,11 @@ func (s *InfraServer) SimulateManyWithErigon(req *api.SimulateRequest, ss api.ME
 	g.Go(func() error {
 		defer close(respChan)
 		var txs []types.Transaction
+		var rawMsgs []*types.Message
 		for _, op := range req.GetBundle() {
 			var err error
 			var tx types.Transaction
+			var msg *types.Message
 			switch op.Type {
 			case api.SimulateTxType_SIMULATE_TXDATA:
 				switch op.Encoding {
@@ -311,7 +325,22 @@ func (s *InfraServer) SimulateManyWithErigon(req *api.SimulateRequest, ss api.ME
 					log.Error("failed to unmarshal transaction", "err", err)
 				}
 			case api.SimulateTxType_SIMULATE_RAW_MESSAGE:
-				err = fmt.Errorf("raw message is not supported")
+				protoMsg := op.RawMessage
+				var to *libcommon.Address
+				if len(protoMsg.To) > 0 {
+					toAddr := libcommon.BytesToAddress(protoMsg.To)
+					to = &toAddr
+				}
+				msg = MakeRawMessage(
+					libcommon.BytesToAddress(protoMsg.From),
+					to,
+					protoMsg.Gas,
+					new(big.Int).SetBytes(protoMsg.GasPrice),
+					new(big.Int).SetBytes(protoMsg.Value),
+					protoMsg.Data,
+					0,
+					true,
+				)
 			default:
 				return fmt.Errorf("unknown tx type: %s", op.Type)
 			}
@@ -319,6 +348,7 @@ func (s *InfraServer) SimulateManyWithErigon(req *api.SimulateRequest, ss api.ME
 				log.Error("failed to get transaction", "err", err)
 			}
 			txs = append(txs, tx)
+			rawMsgs = append(rawMsgs, msg)
 		}
 		blockNumber := rpc.BlockNumberOrHashWithNumber(rpc.BlockNumber(req.GetStateBlockNumber()))
 		var stateOverrides []*api.StateOverride
@@ -338,7 +368,9 @@ func (s *InfraServer) SimulateManyWithErigon(req *api.SimulateRequest, ss api.ME
 			knownCodeHashes = append(knownCodeHashes, preparedEnv.knownCodeHashes...)
 		}
 		_, err := s.traceBackend.MEVCallMany(ctx, tracer,
-			[]string{"mevTrace"}, txs, &blockNumber, stateOverrides, req.GetBlockOverrides(), knownCodeHashes)
+			[]string{"mevTrace"},
+			txs, rawMsgs,
+			&blockNumber, stateOverrides, req.GetBlockOverrides(), knownCodeHashes)
 		if err != nil {
 			log.Error("failed to simulate", "err", err)
 			return err
