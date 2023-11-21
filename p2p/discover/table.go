@@ -304,7 +304,7 @@ loop:
 			live := tab.live()
 
 			vals := []interface{}{"protocol", tab.protocol, "version", tab.net.Version(),
-				"len", tab.len(), "live", tab.live(), "unsol", tab.net.LenUnsolicited(), "ips", tab.ips.Len(), "db", tab.dbseeds, "reval", tab.revalidates}
+				"len", tab.len(), "live", tab.live(), "unsol", tab.net.LenUnsolicited(), "db", tab.dbseeds, "reval", tab.revalidates}
 
 			func() {
 				tab.mutex.Lock()
