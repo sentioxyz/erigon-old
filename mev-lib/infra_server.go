@@ -13,7 +13,6 @@ import (
 	"github.com/ledgerwatch/erigon/cmd/rpcdaemon/commands"
 	"github.com/ledgerwatch/erigon/common/hexutil"
 	"github.com/ledgerwatch/erigon/common/math"
-	"github.com/ledgerwatch/erigon/core/state"
 	"github.com/ledgerwatch/erigon/core/types"
 	"github.com/ledgerwatch/erigon/crypto"
 	"github.com/ledgerwatch/erigon/eth"
@@ -37,7 +36,7 @@ var (
 
 type preparedSimulateEnv struct {
 	stateOverrides      []*api.StateOverride
-	knownCodeHashes     []libcommon.Hash
+	knownCodeHashes     []*libcommon.Hash
 	lastAccessTimestamp int64
 }
 
@@ -353,11 +352,7 @@ func (s *InfraServer) SimulateManyWithErigon(req *api.SimulateRequest, ss api.ME
 		}
 		blockNumber := rpc.BlockNumberOrHashWithNumber(rpc.BlockNumber(req.GetStateBlockNumber()))
 		var stateOverrides []*api.StateOverride
-		var knownCodeHashes []libcommon.Hash
-		for _, override := range req.GetStateOverrides() {
-			stateOverrides = append(stateOverrides, override)
-			knownCodeHashes = append(knownCodeHashes, libcommon.Hash{})
-		}
+		var knownCodeHashes []*libcommon.Hash
 		if req.GetPreparedSimulateEnv() != "" {
 			s.mu.RLock()
 			preparedEnv, ok := s.preparedSimulateEnvMap[req.PreparedSimulateEnv]
@@ -367,6 +362,10 @@ func (s *InfraServer) SimulateManyWithErigon(req *api.SimulateRequest, ss api.ME
 			}
 			stateOverrides = append(stateOverrides, preparedEnv.stateOverrides...)
 			knownCodeHashes = append(knownCodeHashes, preparedEnv.knownCodeHashes...)
+		}
+		for _, override := range req.GetStateOverrides() {
+			stateOverrides = append(stateOverrides, override)
+			knownCodeHashes = append(knownCodeHashes, nil)
 		}
 		_, err := s.traceBackend.MEVCallMany(ctx, tracer,
 			[]string{"mevTrace"},
@@ -386,51 +385,18 @@ func (s *InfraServer) Simulate(req *api.SimulateRequest, ss api.MEVInfra_Simulat
 	return s.SimulateManyWithErigon(req, ss)
 }
 
-func applyStateOverride(statedb *state.IntraBlockState, override *api.StateOverride, knownCodeHash *libcommon.Hash) {
-	address := libcommon.BytesToAddress(override.Address)
-	if len(override.Balance) > 0 {
-		statedb.SetBalance(address, new(uint256.Int).SetBytes(override.Balance))
-	}
-	if len(override.Code) > 0 {
-		if knownCodeHash != nil {
-			statedb.SetCodeWithHashKnown(address, *knownCodeHash, override.Code)
-		} else {
-			statedb.SetCode(address, override.Code)
-		}
-	}
-	if len(override.Storage) > 0 {
-		for key, value := range override.Storage {
-			k := libcommon.BytesToHash([]byte(key))
-			v := new(uint256.Int).SetBytes(value)
-			statedb.SetState(address, &k, *v)
-		}
-	}
-	if override.Nonce > 0 {
-		statedb.SetNonce(address, override.Nonce)
-	}
-}
-
-func (env *preparedSimulateEnv) ApplyTo(statedb *state.IntraBlockState, header *types.Header) {
-	env.lastAccessTimestamp = time.Now().Unix() // No lock needed.
-	for i, override := range env.stateOverrides {
-		if len(override.Code) > 0 {
-			applyStateOverride(statedb, override, &env.knownCodeHashes[i])
-		} else {
-			applyStateOverride(statedb, override, nil)
-		}
-	}
-}
-
 func MakePreparedSimulateEnv(overrides []*api.StateOverride) *preparedSimulateEnv {
 	env := &preparedSimulateEnv{
 		stateOverrides:  overrides,
-		knownCodeHashes: make([]libcommon.Hash, len(overrides)),
+		knownCodeHashes: make([]*libcommon.Hash, len(overrides)),
 	}
 	for i, override := range overrides {
 		if len(override.Code) == 0 {
-			continue
+			env.knownCodeHashes[i] = nil
+		} else {
+			hash := crypto.Keccak256Hash(override.Code)
+			env.knownCodeHashes[i] = &hash
 		}
-		env.knownCodeHashes[i] = crypto.Keccak256Hash(override.Code)
 	}
 	return env
 }

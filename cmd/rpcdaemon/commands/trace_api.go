@@ -27,7 +27,7 @@ type TraceAPI interface {
 	MEVCallMany(ctx context.Context, tracer vm.MEVLogger, traceTypes []string,
 		txs []types.Transaction, rawMsg []*types.Message,
 		blockNr *rpc.BlockNumberOrHash, stateOverrides []*api.StateOverride, blockOverrides *api.BlockOverrides,
-		knownCodeHashes []libcommon.Hash) ([]*TraceCallResult,
+		knownCodeHashes []*libcommon.Hash) ([]*TraceCallResult,
 		error)
 
 	// Filtering (see ./trace_filtering.go)
