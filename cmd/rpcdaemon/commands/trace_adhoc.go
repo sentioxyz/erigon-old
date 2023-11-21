@@ -1275,7 +1275,7 @@ func (api *TraceAPIImpl) doMEVCallMany(ctx context.Context, dbtx kv.Tx, tracer v
 	parentNrOrHash *rpc.BlockNumberOrHash, header *types.Header,
 	stateOverrides []*api.StateOverride,
 	blockOverrides *api.BlockOverrides,
-	knownCodeHashes []libcommon.Hash,
+	knownCodeHashes []*libcommon.Hash,
 	gasBailout bool, txIndexNeeded int) ([]*TraceCallResult, error) {
 	chainConfig, err := api.chainConfig(dbtx)
 	if err != nil {
@@ -1301,11 +1301,7 @@ func (api *TraceAPIImpl) doMEVCallMany(ctx context.Context, dbtx kv.Tx, tracer v
 	cachedWriter := state.NewCachedWriter(noop, stateCache)
 	ibs := state.New(cachedReader)
 	for idx, stateOverride := range stateOverrides {
-		if len(stateOverride.Code) > 0 {
-			api.applyStateOverride(ibs, stateOverride, &knownCodeHashes[idx])
-		} else {
-			api.applyStateOverride(ibs, stateOverride, nil)
-		}
+		api.applyStateOverride(ibs, stateOverride, knownCodeHashes[idx])
 	}
 
 	// TODO: can read here only parent header
@@ -1471,7 +1467,7 @@ func (api *TraceAPIImpl) MEVCallMany(ctx context.Context,
 	parentNrOrHash *rpc.BlockNumberOrHash,
 	stateOverrides []*api.StateOverride,
 	blockOverrides *api.BlockOverrides,
-	knownCodeHashes []libcommon.Hash) ([]*TraceCallResult, error) {
+	knownCodeHashes []*libcommon.Hash) ([]*TraceCallResult, error) {
 	if len(txs) != len(rawMsgs) {
 		return nil, fmt.Errorf("txs and msgs length mismatch")
 	}
