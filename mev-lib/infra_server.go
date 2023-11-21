@@ -138,7 +138,7 @@ func (s *InfraServer) HistoricalState(ctx context.Context, req *api.HistoricalSt
 func (s *InfraServer) EthCall(ctx context.Context, req *api.EthCallRequest) (
 	*api.EthCallResponse, error) {
 	callArgs := ethapi2.CallArgs{}
-	maxGas := hexutil.Uint64(math.MaxInt64)
+	maxGas := hexutil.Uint64(math.MaxUint64)
 	overrides := map[libcommon.Address]ethapi2.Account{}
 	data := hexutil.Bytes(req.Data)
 	switch {
@@ -146,9 +146,9 @@ func (s *InfraServer) EthCall(ctx context.Context, req *api.EthCallRequest) (
 		callArgs.Gas = &maxGas
 		callArgs.To = &mockAddress
 		callArgs.Data = &data
-		code := req.GetCode()
+		code := hexutil.Bytes(req.GetCode())
 		overrides[mockAddress] = ethapi2.Account{
-			Code: (*hexutil.Bytes)(&code),
+			Code: &code,
 		}
 	case req.GetAddress() != nil:
 		callArgs.Gas = &maxGas
@@ -160,18 +160,19 @@ func (s *InfraServer) EthCall(ctx context.Context, req *api.EthCallRequest) (
 	}
 	stateOverrides := ethapi2.StateOverrides(overrides)
 	block := rpc.BlockNumberOrHashWithNumber(rpc.BlockNumber(req.GetBlockNumber()))
-
 	result, err := s.ethBackend.Call(ctx,
 		callArgs,
 		block,
 		&stateOverrides)
 	if err != nil {
+		log.Error("failed to eth call", "err", err)
 		return nil, err
 	}
 	gasUsed, err := s.ethBackend.EstimateGas(ctx,
 		&callArgs,
 		&block)
 	if err != nil {
+		log.Error("failed to estimate gas", "err", err)
 		return nil, err
 	}
 	return &api.EthCallResponse{
