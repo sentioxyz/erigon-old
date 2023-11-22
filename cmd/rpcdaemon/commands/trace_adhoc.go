@@ -1260,7 +1260,7 @@ func (api *TraceAPIImpl) applyStateOverride(statedb *state.IntraBlockState, over
 	}
 	if len(override.Storage) > 0 {
 		for key, value := range override.Storage {
-			k := libcommon.BytesToHash([]byte(key))
+			k := libcommon.HexToHash(key)
 			v := new(uint256.Int).SetBytes(value)
 			statedb.SetState(address, &k, *v)
 		}
