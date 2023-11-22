@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/big"
 	"sync/atomic"
 
 	"github.com/holiman/uint256"
@@ -95,6 +96,8 @@ type Trace struct {
 
 	// the function get called
 	function *functionInfo
+
+	BlockNumber *hexutil.Big `json:"blockNumber,omitempty"`
 }
 
 type sentioTracer struct {
@@ -130,13 +133,16 @@ func (t *sentioTracer) CaptureTxEnd(restGas uint64) {
 func (t *sentioTracer) CaptureStart(env vm.VMInterface, from libcommon.Address, to libcommon.Address, precompile bool, create bool, input []byte, gas uint64, value *uint256.Int, code []byte) {
 	t.env = env
 
+	var blockNumber big.Int
+	blockNumber.SetUint64(env.Context().BlockNumber)
 	root := Trace{
-		StartIndex: -1,
-		Type:       vm.CALL.String(),
-		From:       &from,
-		To:         &to,
-		Gas:        math.HexOrDecimal64(gas),
-		Input:      hexutil.Bytes(input).String(),
+		StartIndex:  -1,
+		Type:        vm.CALL.String(),
+		From:        &from,
+		To:          &to,
+		Gas:         math.HexOrDecimal64(gas),
+		Input:       hexutil.Bytes(input).String(),
+		BlockNumber: (*hexutil.Big)(&blockNumber),
 	}
 	if value != nil {
 		root.Value = (*hexutil.Big)(value.ToBig())
